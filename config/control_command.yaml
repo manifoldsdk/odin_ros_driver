@@ -1,0 +1,7 @@
+register_keys:
+  streamctrl: 1
+  sendrgb: 1
+  sendimu: 1
+  sendodom: 1
+  senddtof: 0
+  sendcloudslam: 1

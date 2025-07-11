@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>odin_ros_driver</name>
+  <version>0.0.1</version>
+  <description>ROS2 driver for Odin sensor</description>
+  <maintainer email="oliveiratang@manifoldtech.cn">rlk</maintainer>
+  <license>Apache 2.0</license>
+    <!-- ROS2 使用 colcon 作为构建工具 -->
+  <buildtool_depend>ament_cmake</buildtool_depend>
+    <!-- ROS2 依赖项 -->
+  <depend>rclcpp</depend>
+    <!-- 系统依赖项 -->
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>image_transport</depend>
+    <!-- 指定构建类型为 ament -->
+  <export>  
+    <build_type>ament_cmake</build_type>  
+  </export> 
+</package>

@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>odin_ros_driver</name>
+  <version>0.0.1</version>
+  <description>ROS driver for Odin sensor</description>
+  <maintainer email="oliveiratang@manifoldtech.cn">rlk</maintainer>
+  <license>Apache 2.0</license>
+  
+  <!-- ROS1 使用 catkin 作为构建工具 -->
+  <buildtool_depend>catkin</buildtool_depend>
+  
+  <!-- ROS1 依赖项 -->
+  <depend>roscpp</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>image_transport</depend>
+  
+  <!-- 系统依赖项 -->
+  <depend>eigen</depend>
+  <depend>opencv</depend>
+  <depend>yaml-cpp</depend>
+  
+  <!-- 指定构建类型为 catkin -->
+  <export>
+    <build_type>catkin</build_type>
+  </export>
+</package>
