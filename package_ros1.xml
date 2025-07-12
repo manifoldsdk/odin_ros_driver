@@ -6,10 +6,10 @@
   <maintainer email="oliveiratang@manifoldtech.cn">rlk</maintainer>
   <license>Apache 2.0</license>
   
-  <!-- ROS1 使用 catkin 作为构建工具 -->
+  <!-- ROS1 uses catkin as the build tool -->
   <buildtool_depend>catkin</buildtool_depend>
   
-  <!-- ROS1 依赖项 -->
+  <!-- ROS1 dependencies -->
   <depend>roscpp</depend>
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
@@ -17,12 +17,12 @@
   <depend>cv_bridge</depend>
   <depend>image_transport</depend>
   
-  <!-- 系统依赖项 -->
+  <!-- System dependencies -->
   <depend>eigen</depend>
   <depend>opencv</depend>
   <depend>yaml-cpp</depend>
   
-  <!-- 指定构建类型为 catkin -->
+  <!-- Specify build type as catkin -->
   <export>
     <build_type>catkin</build_type>
   </export>

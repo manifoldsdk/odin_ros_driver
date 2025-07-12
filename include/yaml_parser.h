@@ -21,7 +21,6 @@ namespace odin_ros_driver {
 
 class YamlParser {
 public:
-    // 使用一致的成员变量名
     YamlParser(const std::string& config_file);
     
     bool loadConfig();
@@ -33,6 +32,6 @@ private:
     std::map<std::string, int> register_keys_;
 };
 
-} // namespace odin_ros_driver
+} 
 
-#endif // YAML_PARSER_H
+#endif 

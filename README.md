@@ -67,13 +67,17 @@ sudo apt-get install libopencv-dev
 ```
 
 #### 2.3.4 ROS install
-```shell
-#Installation method
-For ROS Melodic installation, please refer to: ROS Melodic installation instructions
-For ROS Noetic installation, please refer to: ROS Noetic installation instructions
-For ROS2 Foxy installation, please refer to: ROS Foxy installation instructions
-For ROS2 Humble installation, please refer to: ROS Humble installation instructions
-```
+For ROS Melodic installation, please refer to:
+[ROS Melodic installation instructions](https://wiki.ros.org/melodic/Installation)
+
+For ROS Noetic installation, please refer to:
+[ROS Noetic installation instructions](https://wiki.ros.org/noetic/Installation)
+
+For ROS2 Foxy installation, please refer to:
+[ROS Foxy installation instructions](https://docs.ros.org/en/foxy/Installation/Ubuntu-Install-Debians.html)
+
+For ROS2 Humble installation, please refer to:
+[ROS Humble installation instructions](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debians.html)
 
 ## 3. Preparation
 
@@ -83,7 +87,7 @@ sudo vim /etc/udev/rules.d/99-odin-usb.rules
 ```
 Add the following content to the 99-odin-usb.rules file
 ```shell
-SUBSYSTEM=="usb", ATTR{idVendor}=="2207", ATTR{idProduct}=="0019", MODE="0666", GROUP="plugdev
+SUBSYSTEM=="usb", ATTR{idVendor}=="2207", ATTR{idProduct}=="0019", MODE="0666", GROUP="plugdev"
 ```
 Reload rules and reinsert devices
 ```shell
