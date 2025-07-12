@@ -67,14 +67,14 @@ limitations under the License.
     }
 #endif
 
-// 公共定义
+// Common definitions
 #define GD_ACCL_G 9.7833f
 #define ACC_1G_ms2 9.8
 #define ACC_SEN_SCALE 16348
 #define PAI 3.14159265358979323846
 #define GYRO_SEN_SCALE 32.8f
 
-// 公共函数
+// Common functions
 inline float accel_convert(int16_t raw, int sen_scale) {
     return (raw * GD_ACCL_G / sen_scale);
 }
@@ -103,7 +103,7 @@ inline uint64_t ros_time_to_ns(const ros::Time &t) {
     #endif
 }
 
-// 多传感器发布器类
+// Multi-sensor publisher class
 class MultiSensorPublisher {
 public:
     #ifdef ROS2
@@ -147,9 +147,9 @@ public:
         #endif
     }
 
-void publishIntensityCloud(capture_Image_List_t* stream, int idx) 
-{
-    #ifdef ROS2
+    void publishIntensityCloud(capture_Image_List_t* stream, int idx) 
+    {
+        #ifdef ROS2
             sensor_msgs::msg::PointCloud2 msg;
             msg.header.frame_id = "map";
             msg.header.stamp = ns_to_ros_time(stream->imageList[0].timestamp);
@@ -172,63 +172,63 @@ void publishIntensityCloud(capture_Image_List_t* stream, int idx)
             sensor_msgs::PointCloud2Iterator<float> iter_y(msg, "y");
             sensor_msgs::PointCloud2Iterator<float> iter_z(msg, "z");
             sensor_msgs::PointCloud2Iterator<uint8_t> iter_intensity(msg, "intensity");
-    #else
-        sensor_msgs::PointCloud2 msg;
-        msg.header.frame_id = "map";
-        msg.header.stamp = ros::Time::now();  // ROS1使用全局时间
-        msg.height = stream->imageList[idx].height;
-        msg.width = stream->imageList[idx].width;
-        msg.is_dense = false;
-        msg.is_bigendian = false;
-
-        sensor_msgs::PointCloud2Modifier modifier(msg);
-        modifier.setPointCloud2Fields(
-            4,
-            "x", 1, sensor_msgs::PointField::FLOAT32,
-            "y", 1, sensor_msgs::PointField::FLOAT32,
-            "z", 1, sensor_msgs::PointField::FLOAT32,
-            "intensity", 1, sensor_msgs::PointField::UINT8
-        );
-        modifier.resize(msg.height * msg.width);
-
-        sensor_msgs::PointCloud2Iterator<float> iter_x(msg, "x");
-        sensor_msgs::PointCloud2Iterator<float> iter_y(msg, "y");
-        sensor_msgs::PointCloud2Iterator<float> iter_z(msg, "z");
-        sensor_msgs::PointCloud2Iterator<uint8_t> iter_intensity(msg, "intensity");
-    #endif
-
-    float* xyz_data = static_cast<float*>(stream->imageList[idx].pAddr);
-    uint16_t* intensity_data = static_cast<uint16_t*>(stream->imageList[2].pAddr);
-
-    int total_points = stream->imageList[idx].height * stream->imageList[idx].width;
-    for (int i = 0; i < total_points; ++i) {
-        float* pf = xyz_data + i * 4;
-
-        #ifdef ROS2
-            *iter_x = pf[2] / 1000.0f; ++iter_x;
-            *iter_y = pf[0] / 1000.0f; ++iter_y;
-            *iter_z = -pf[1] / 1000.0f; ++iter_z;
-            *iter_intensity = static_cast<uint8_t>(intensity_data[i] >> 8); ++iter_intensity;
         #else
-            *iter_x = pf[2] / 1000.0f; ++iter_x;
-            *iter_y = pf[0] / 1000.0f; ++iter_y;
-            *iter_z = -pf[1] / 1000.0f; ++iter_z;
-            *iter_intensity = static_cast<uint8_t>(intensity_data[i] >> 8); ++iter_intensity;
+            sensor_msgs::PointCloud2 msg;
+            msg.header.frame_id = "map";
+            msg.header.stamp = ros::Time::now();  
+            msg.height = stream->imageList[idx].height;
+            msg.width = stream->imageList[idx].width;
+            msg.is_dense = false;
+            msg.is_bigendian = false;
+
+            sensor_msgs::PointCloud2Modifier modifier(msg);
+            modifier.setPointCloud2Fields(
+                4,
+                "x", 1, sensor_msgs::PointField::FLOAT32,
+                "y", 1, sensor_msgs::PointField::FLOAT32,
+                "z", 1, sensor_msgs::PointField::FLOAT32,
+                "intensity", 1, sensor_msgs::PointField::UINT8
+            );
+            modifier.resize(msg.height * msg.width);
+
+            sensor_msgs::PointCloud2Iterator<float> iter_x(msg, "x");
+            sensor_msgs::PointCloud2Iterator<float> iter_y(msg, "y");
+            sensor_msgs::PointCloud2Iterator<float> iter_z(msg, "z");
+            sensor_msgs::PointCloud2Iterator<uint8_t> iter_intensity(msg, "intensity");
+        #endif
+
+        float* xyz_data = static_cast<float*>(stream->imageList[idx].pAddr);
+        uint16_t* intensity_data = static_cast<uint16_t*>(stream->imageList[2].pAddr);
+
+        int total_points = stream->imageList[idx].height * stream->imageList[idx].width;
+        for (int i = 0; i < total_points; ++i) {
+            float* pf = xyz_data + i * 4;
+
+            #ifdef ROS2
+                *iter_x = pf[2] / 1000.0f; ++iter_x;
+                *iter_y = -pf[0] / 1000.0f; ++iter_y;
+                *iter_z = pf[1] / 1000.0f; ++iter_z;
+                *iter_intensity = static_cast<uint8_t>(intensity_data[i] >> 8); ++iter_intensity;
+            #else
+                *iter_x = pf[2] / 1000.0f; ++iter_x;
+                *iter_y = -pf[0] / 1000.0f; ++iter_y;
+                *iter_z = pf[1] / 1000.0f; ++iter_z;
+                *iter_intensity = static_cast<uint8_t>(intensity_data[i] >> 8); ++iter_intensity;
+            #endif
+        }
+
+        // Publish Intensity point cloud
+        #ifdef ROS2
+            cloud_pub_->publish(std::move(msg));
+        #else
+            cloud_pub_.publish(msg);
         #endif
     }
-
-    // 发布点云
-    #ifdef ROS2
-        cloud_pub_->publish(std::move(msg));
-    #else
-        cloud_pub_.publish(msg);
-    #endif
-}
 
     void publishRgb(capture_Image_List_t *stream) {
         buffer_List_t &image = stream->imageList[0];
         
-        // 验证图像参数
+        // Validate image parameters
         if (!image.pAddr) {
             #ifdef ROS2
                 RCLCPP_ERROR(node_->get_logger(), "Invalid RGB image: null data pointer");
@@ -247,10 +247,10 @@ void publishIntensityCloud(capture_Image_List_t* stream, int idx)
             return;
         }
         
-        // 计算 NV12 图像高度
+        // Calculate NV12 image height
         const int height_nv12 = image.height * 3 / 2;
         
-        // 验证 NV12 图像尺寸
+        // Validate NV12 image size
         const size_t expected_size = static_cast<size_t>(image.width) * height_nv12;
         if (image.length < expected_size) {
             #ifdef ROS2
@@ -312,103 +312,103 @@ void publishIntensityCloud(capture_Image_List_t* stream, int idx)
         }
     }
 
-void publishPC2XYZRGBA(capture_Image_List_t* stream, int idx) 
-{
-    static int flag = 1;
-    #ifdef ROS2
-            sensor_msgs::msg::PointCloud2 msg;
-            // msg.header.frame_id = "base_link";
+    void publishPC2XYZRGBA(capture_Image_List_t* stream, int idx) 
+    {
+        static int flag = 1;
+        #ifdef ROS2
+                sensor_msgs::msg::PointCloud2 msg;
+                // msg.header.frame_id = "base_link";
+                msg.header.frame_id = "map";
+                msg.header.stamp = ns_to_ros_time(stream->imageList[0].timestamp);
+                // msg.header.stamp = this->now();
+                size_t pt_size = sizeof(int32_t) * 3 + sizeof(int32_t) * 4;
+                uint32_t points = stream->imageList[idx].length / pt_size;
+
+                msg.height = 1;
+                msg.width = points;
+                msg.is_dense = false;
+                // LOG_INFO("msg.height=%ld, msg.width=%ld.\n", msg.height, msg.width);
+
+                sensor_msgs::PointCloud2Modifier modifier(msg);
+                modifier.setPointCloud2Fields(
+                    4,
+                    "x", 1, sensor_msgs::msg::PointField::FLOAT32,
+                    "y", 1, sensor_msgs::msg::PointField::FLOAT32,
+                    "z", 1, sensor_msgs::msg::PointField::FLOAT32,
+                    "rgb", 1, sensor_msgs::msg::PointField::FLOAT32
+                );
+                modifier.resize(msg.width * msg.height);
+
+                sensor_msgs::PointCloud2Iterator<float> iter_x(msg, "x");
+                sensor_msgs::PointCloud2Iterator<float> iter_y(msg, "y");
+                sensor_msgs::PointCloud2Iterator<float> iter_z(msg, "z");
+                sensor_msgs::PointCloud2Iterator<float> iter_rgb(msg, "rgb");
+        #else
+            sensor_msgs::PointCloud2 msg;
             msg.header.frame_id = "map";
             msg.header.stamp = ns_to_ros_time(stream->imageList[0].timestamp);
-            // msg.header.stamp = this->now();
+            
             size_t pt_size = sizeof(int32_t) * 3 + sizeof(int32_t) * 4;
             uint32_t points = stream->imageList[idx].length / pt_size;
-
+            
             msg.height = 1;
             msg.width = points;
             msg.is_dense = false;
-            // LOG_INFO("msg.height=%ld, msg.width=%ld.\n", msg.height, msg.width);
-
+            
             sensor_msgs::PointCloud2Modifier modifier(msg);
             modifier.setPointCloud2Fields(
                 4,
-                "x", 1, sensor_msgs::msg::PointField::FLOAT32,
-                "y", 1, sensor_msgs::msg::PointField::FLOAT32,
-                "z", 1, sensor_msgs::msg::PointField::FLOAT32,
-                "rgb", 1, sensor_msgs::msg::PointField::FLOAT32
+                "x", 1, sensor_msgs::PointField::FLOAT32,
+                "y", 1, sensor_msgs::PointField::FLOAT32,
+                "z", 1, sensor_msgs::PointField::FLOAT32,
+                "rgb", 1, sensor_msgs::PointField::FLOAT32
             );
             modifier.resize(msg.width * msg.height);
-
+            
             sensor_msgs::PointCloud2Iterator<float> iter_x(msg, "x");
             sensor_msgs::PointCloud2Iterator<float> iter_y(msg, "y");
             sensor_msgs::PointCloud2Iterator<float> iter_z(msg, "z");
             sensor_msgs::PointCloud2Iterator<float> iter_rgb(msg, "rgb");
-    #else
-        sensor_msgs::PointCloud2 msg;
-        msg.header.frame_id = "map";
-        msg.header.stamp = ns_to_ros_time(stream->imageList[0].timestamp);
-        
-        size_t pt_size = sizeof(int32_t) * 3 + sizeof(int32_t) * 4;
-        uint32_t points = stream->imageList[idx].length / pt_size;
-        
-        msg.height = 1;
-        msg.width = points;
-        msg.is_dense = false;
-        
-        sensor_msgs::PointCloud2Modifier modifier(msg);
-        modifier.setPointCloud2Fields(
-            4,
-            "x", 1, sensor_msgs::PointField::FLOAT32,
-            "y", 1, sensor_msgs::PointField::FLOAT32,
-            "z", 1, sensor_msgs::PointField::FLOAT32,
-            "rgb", 1, sensor_msgs::PointField::FLOAT32
-        );
-        modifier.resize(msg.width * msg.height);
-        
-        sensor_msgs::PointCloud2Iterator<float> iter_x(msg, "x");
-        sensor_msgs::PointCloud2Iterator<float> iter_y(msg, "y");
-        sensor_msgs::PointCloud2Iterator<float> iter_z(msg, "z");
-        sensor_msgs::PointCloud2Iterator<float> iter_rgb(msg, "rgb");
-    #endif
-    
-    // 共享的数据处理逻辑
-    int32_t* xyz_data = static_cast<int32_t*>(stream->imageList[idx].pAddr);
-    
-    for(uint32_t i = 0; i < points; i++) {
-        int32_t* ptr = xyz_data + 7*i;
-        
-        #ifdef ROS2
-            *iter_x = static_cast<float>(ptr[0]) / 10000.0f; ++iter_x;
-            *iter_y = static_cast<float>(ptr[1]) / 10000.0f; ++iter_y;
-            *iter_z = static_cast<float>(ptr[2]) / 10000.0f; ++iter_z;
-        #else
-            *iter_x = (1.0 * ptr[0]) / 1e4; ++iter_x;
-            *iter_y = (1.0 * ptr[1]) / 1e4; ++iter_y;
-            *iter_z = (1.0 * ptr[2]) / 1e4; ++iter_z;
         #endif
         
-        uint8_t r = ptr[3] & 0xff;
-        uint8_t g = ptr[4] & 0xff;
-        uint8_t b = ptr[5] & 0xff;  
+        // Shared data processing logic
+        int32_t* xyz_data = static_cast<int32_t*>(stream->imageList[idx].pAddr);
         
-        uint32_t packed_rgb = (static_cast<uint32_t>(r) << 16) | 
-                             (static_cast<uint32_t>(g) << 8)  | 
-                             static_cast<uint32_t>(b);
+        for(uint32_t i = 0; i < points; i++) {
+            int32_t* ptr = xyz_data + 7*i;
+            
+            #ifdef ROS2
+                *iter_x = static_cast<float>(ptr[0]) / 10000.0f; ++iter_x;
+                *iter_y = static_cast<float>(ptr[1]) / 10000.0f; ++iter_y;
+                *iter_z = static_cast<float>(ptr[2]) / 10000.0f; ++iter_z;
+            #else
+                *iter_x = (1.0 * ptr[0]) / 1e4; ++iter_x;
+                *iter_y = (1.0 * ptr[1]) / 1e4; ++iter_y;
+                *iter_z = (1.0 * ptr[2]) / 1e4; ++iter_z;
+            #endif
+            
+            uint8_t r = ptr[3] & 0xff;
+            uint8_t g = ptr[4] & 0xff;
+            uint8_t b = ptr[5] & 0xff;  
+            
+            uint32_t packed_rgb = (static_cast<uint32_t>(r) << 16) | 
+                                (static_cast<uint32_t>(g) << 8)  | 
+                                static_cast<uint32_t>(b);
+            
+            float rgb_float;
+            std::memcpy(&rgb_float, &packed_rgb, sizeof(float));
+            
+            *iter_rgb = rgb_float; ++iter_rgb;
+        }
         
-        float rgb_float;
-        std::memcpy(&rgb_float, &packed_rgb, sizeof(float));
-        
-        *iter_rgb = rgb_float; ++iter_rgb;
+        #ifdef ROS2
+            flag = 0; // Preserve assignment if flag is used elsewhere
+            xyzrgbacloud_pub_->publish(std::move(msg));
+        #else
+            flag = 0;
+            xyzrgbacloud_pub_.publish(msg);
+        #endif
     }
-    
-    #ifdef ROS2
-        flag = 0; // 如果flag在其他地方使用，保留赋值
-        xyzrgbacloud_pub_->publish(std::move(msg));
-    #else
-        flag = 0;
-        xyzrgbacloud_pub_.publish(msg);
-    #endif
-}
 
     void publishOdometry(capture_Image_List_t* stream) {
         ros2_odom_convert_t* odom_data = (ros2_odom_convert_t*)stream->imageList[0].pAddr;
@@ -476,7 +476,6 @@ private:
     #endif
 };
 
-// 命令行控制类
 class CommandLineControl {
 public:
     using Callback = std::function<void(const std::string&, int)>;
@@ -539,7 +538,6 @@ private:
 
 };
 
-// 控制命令定义
 #define STREAMCTRL "streamctrl"        /* start/stop all streams */
 #define SENDRGB    "sendrgb"           /* send RGB data */
 #define SENDIMU    "sendimu"           /* send IMU data */

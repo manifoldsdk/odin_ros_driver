@@ -1,12 +1,22 @@
 <launch>
     <!-- 
-        用法: roslaunch odin_ros_driver odin1_ros1.launch
+        Usage: roslaunch odin_ros_driver odin1_ros1.launch
     -->
     
-    <!-- 设置节点名称 -->
+    <!-- Set node name -->
     <arg name="node_name" default="host_sdk_sample"/>
     
-    <!-- 启动节点 -->
+    <!-- Set parameter file path -->
+    <arg name="config_file" default="$(find odin_ros_driver)/config/control_command.yaml"/>
+    
+    <!-- Set RViz configuration file path -->
+    <arg name="rviz_config" default="$(find odin_ros_driver)/config/odin_ros.rviz"/>
+    
+    <!-- Launch main node -->
     <node name="$(arg node_name)" pkg="odin_ros_driver" type="host_sdk_sample" output="screen">
+        <param name="config_file" value="$(arg config_file)"/>
     </node>
+    
+    <!-- Launch RViz with configuration -->
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(arg rviz_config)" output="screen"/>
 </launch>

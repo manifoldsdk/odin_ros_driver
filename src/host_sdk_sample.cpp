@@ -16,7 +16,7 @@ static device_handle odinDevice = nullptr;
 static std::shared_ptr<MultiSensorPublisher> g_ros_object;
 static std::atomic<bool> deviceConnected(false);
 
-// 定义获取包路径的函数
+// Function to get package share path
 std::string get_package_share_path(const std::string& package_name) {
 #ifdef ROS2
     try {
@@ -33,7 +33,7 @@ std::string get_package_share_path(const std::string& package_name) {
 #endif
 }
 
-// 全局配置变量
+// Global configuration variables
 static int g_sendrgb = 1;
 static int g_sendimu = 1;
 static int g_senddtof = 1;
@@ -93,7 +93,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             ROS_INFO("Device attaching...");
         #endif
         
-        // 清理任何已存在的设备
+        // Clean up any existing device
         if (odinDevice) {
             lidar_stop_stream(odinDevice, type);
             lidar_unregister_stream_callback(odinDevice);
@@ -102,7 +102,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             odinDevice = nullptr;
         }
         
-        // 修复：使用const_cast移除const限定符
+        // Use const_cast to remove const qualifier
         if (lidar_create_device(const_cast<lidar_device_info_t*>(device), &odinDevice)) {
             #ifdef ROS2
                 RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Create device failed");
@@ -112,7 +112,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             return;
         }
         
-        // 打开设备
+        // Open device
         if (lidar_open_device(odinDevice)) {
             #ifdef ROS2
                 RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Open device failed");
@@ -124,7 +124,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             return;
         }
         
-        // 设置模式
+        // Set mode
         if (lidar_set_mode(odinDevice, type)) {
             #ifdef ROS2
                 RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Set mode failed");
@@ -137,7 +137,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             return;
         }
         
-        // 注册回调
+        // Register callback
         lidar_data_callback_info_t data_callback_info;
         data_callback_info.data_callback = lidar_data_callback;
         data_callback_info.user_data = &odinDevice;
@@ -154,7 +154,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             return;
         }
         
-        // 启动数据流
+        // Start data stream
         if (lidar_start_stream(odinDevice, type)) {
             #ifdef ROS2
                 RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Start stream failed");
@@ -167,7 +167,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             return;
         }
         
-        // 根据配置激活数据流类型
+        // Activate stream types based on configuration
         if (g_sendrgb) {
             lidar_activate_stream_type(odinDevice, LIDAR_DT_RAW_RGB);
         }
@@ -211,7 +211,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
 
 int main(int argc, char *argv[])
 {
-    // ROS初始化
+    // ROS initialization
     #ifdef ROS2
         rclcpp::init(argc, argv);
         auto node = std::make_shared<rclcpp::Node>("lydros_node");
@@ -226,10 +226,10 @@ int main(int argc, char *argv[])
         std::string package_path = get_package_share_path("odin_ros_driver");
         std::string config_file = package_path + "/config/control_command.yaml";   
         
-        // 创建 YAML 解析器
+        // Create YAML parser
         odin_ros_driver::YamlParser parser(config_file);
         
-        // 加载配置
+        // Load configuration
         if (!parser.loadConfig()) {
         #ifdef ROS2
             RCLCPP_ERROR(node->get_logger(), "Failed to load config file: %s", config_file.c_str());
@@ -239,13 +239,12 @@ int main(int argc, char *argv[])
             return -1;
         }
         
-        // 获取键值映射
+        // Get key-value
         auto keys = parser.getRegisterKeys();
         
-        // 打印配置
+        // Print configuration
         parser.printConfig();
         
-        // 获取键值函数
         auto get_key_value = [&](const std::string& key_name, int default_value) -> int {  
             auto it = keys.find(key_name);
             if (it != keys.end()) {
@@ -254,17 +253,17 @@ int main(int argc, char *argv[])
             return default_value;
         };
         
-        // 读取配置值到全局变量
+        // Read configuration values into global variables
         g_sendrgb = get_key_value("sendrgb", 1);
         g_sendimu = get_key_value("sendimu", 1);
         g_senddtof = get_key_value("senddtof", 1);
         g_sendodom = get_key_value("sendodom", 1);
         g_sendcloudslam = get_key_value("sendcloudslam", 0);
         
-        // 设置日志级别
+        // Set log level
         lidar_log_set_level(LIDAR_LOG_INFO);
 
-        // 初始化系统，启动USB监控
+        // Initialize system and start USB monitoring
         if(lidar_system_init(lidar_device_callback)) {
         #ifdef ROS2
             RCLCPP_ERROR(node->get_logger(), "Lidar system init failed");
@@ -274,7 +273,7 @@ int main(int argc, char *argv[])
             return -1;
         }
         
-        // 等待设备连接（最长30秒）
+        // wait device connect
         #ifdef ROS2
             RCLCPP_INFO(node->get_logger(), "Waiting for device connection...");
         #else
@@ -308,7 +307,7 @@ int main(int argc, char *argv[])
             return -1;
     }
 
-    // ROS主循环
+    // ROS loop
     #ifdef ROS2
         rclcpp::spin(node);
         rclcpp::shutdown();
@@ -317,7 +316,7 @@ int main(int argc, char *argv[])
         ros::shutdown();
     #endif
 
-    // 清理
+    // Cleanup
     if (odinDevice) {
         lidar_stop_stream(odinDevice, LIDAR_MODE_SLAM);
         lidar_unregister_stream_callback(odinDevice);
