@@ -154,6 +154,7 @@ if(ROS_VERSION STREQUAL "ROS1")
     add_executable(host_sdk_sample 
         src/host_sdk_sample.cpp
         src/yaml_parser.cpp
+        src/rawCloudRender.cpp
     )
     target_link_libraries(host_sdk_sample
         ${catkin_LIBRARIES}
@@ -198,6 +199,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     add_executable(host_sdk_sample 
         src/host_sdk_sample.cpp
         src/yaml_parser.cpp  
+        src/rawCloudRender.cpp
         )
     
     # Link libraries
@@ -292,3 +294,4 @@ message(STATUS "Target platform: ${TARGET_PLATFORM}")
 message(STATUS "lydHostApi library: ${LYD_HOST_API_LIB}")
 message(STATUS "libusb library: ${LIBUSB_LIBRARIES}")
 message(STATUS "=======================================")
+

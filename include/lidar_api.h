@@ -110,6 +110,17 @@ int lidar_open_device(device_handle device);
  * @param device Handle to the device to close
  * @return int 0 on success, negative error code on failure
  */
+int lidar_get_calib_file(device_handle device, const char* path);
+
+/**
+ * @brief Get device calibration parameters
+ * 
+ * Retrieves the current calibration parameters from the device.
+ * 
+ * @param device Handle to the target device
+ * @param param Pointer to receive the calibration parameters
+ * @return int 0 on success, negative error code on failure
+ */
 int lidar_close_device(device_handle device);
 
 /**

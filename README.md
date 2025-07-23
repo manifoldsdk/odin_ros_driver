@@ -16,7 +16,7 @@ This driver package provides core functionality for point cloud SLAM application
 
 ## 1. Version
 
-Current Version: v0.1
+Current Version: v0.2
 
 ## 2. Preparation
 
@@ -99,22 +99,22 @@ sudo udevadm trigger
 git clone https://github.com/manifoldsdk/odin_ros_driver.git catkin_ws/src/odin_ros_driver
 ```
 Note:
-Please clone the source code into the "[workspace]/src/" folder, otherwise compilation errors will occur.
+Please clone the source code into the "[ros_workspace]/src/" folder, otherwise compilation errors will occur.
 
 ### 3.3 make
 
 #### 3.3.1 ROS1 (Noetic for example):
 
 ```shell
-source /opt/ros/noetic/setup.sh
-./scripty/build_ros.sh
+source /opt/ros/noetic/setup.bash
+./script/build_ros.sh
 ```
 
 #### 3.3.2 ROS2 (Foxy for example):
 
 ```shell
-source /opt/ros/foxy/setup.sh
-./scripty/build_ros2.sh
+source /opt/ros/foxy/setup.bash
+./script/build_ros2.sh
 ```
 
 ### 3.4 run:
@@ -122,26 +122,28 @@ source /opt/ros/foxy/setup.sh
 #### 3.4.1 ROS1 (Noetic for example):
 
 ```shell
-source ../../devel/setup.sh
-roslaunch odin_ros_driver [launch file]
+source [ros_workspace]/install/setup.bash
+ros2 launch odin_ros_driver [launch file]
 ```
 ● odin_ros_driver: package name;
 
 ● launch file: launch file;
 
-ROS1 Demo Launch Instructions:
+● ros_workspace: User's ROS environment workspace;
 ```shell
 roslaunch odin_ros_driver odin1_ros1.launch
 ```
 #### 3.4.2 ROS2 (Foxy for example):
 
 ```shell
-source ../../install/setup.sh
+source [ros2_workspace]/install/setup.bash
 ros2 launch odin_ros_driver [launch file]
 ```
 ● odin_ros_driver: package name;
 
 ● launch file: launch file;
+
+● ros2_workspace: User's ROS2 environment workspace;
 
 ROS2 Demo Launch Instructions:
 ```shell
@@ -155,6 +157,7 @@ Odin_ROS_Driver/                // ROS1/ROS2 driver package
     src/
         host_sdk_sample.cpp     // Example source code
         yaml_parser.cpp         // Source code for reading yaml parameters
+        rawCloudRender.cpp      // Source code for RenderCloud
     lib/
         liblydHostApi_amd.a     // Static library for AMD platform
         liblydHostApi_arm.a     // Static library for ARM platform
@@ -163,8 +166,10 @@ Odin_ROS_Driver/                // ROS1/ROS2 driver package
         lidar_api_type.h        // API data structure header file
         lidar_api.h             // API function declarations
         yaml_parser.h           // Parameter file reading header file
+        rawCloudRender.h        // API about RenderCloud
     config/
-        control_command.yaml    // control parameter file for driver
+        control_command.yaml    // Control parameter file for driver
+        calib.yaml              //Machine calibration yaml
     launch_ROS1/
         odin1_ros1.launch       // ROS1 launch file
     launch_ROS2/
@@ -182,38 +187,30 @@ Odin_ROS_Driver/                // ROS1/ROS2 driver package
 | odin1_ros1.launch        | Launch file for ROS1 - Odin1 Basic Operations Demo |
 | odin1_ros2.launch.py     | Launch file for ROS2 - Odin1 Basic Operations Demo |
 
-### 4.3 Config file
-Internal parameters of the Odin ROS driver are defined in config/control_command.yaml. Below are descriptions of the commonly used parameters:
-| Parameter     | Detailed Description | Default |
-|---------------|----------------------|---------|
-| streamctrl: 1 | Master data stream control (0: OFF, 1: ON) | 1 |
-| sendrgb:1     | RGB image stream control (0: OFF, 1: ON) | 1 |
-| sendimu:1     | IMU (Inertial Measurement Unit) stream control (0: OFF, 1: ON) | 1 |
-| sendodom:1    | Odometry data stream control (0: OFF, 1: ON) | 1 |
-| senddtof:0    | Raw PointCloud sensor stream control (0: OFF, 1: ON) | 0 |
-| sendcloudslam:1 | Slam PointCloud stream control (0: OFF, 1: ON) | 1 |
 
-### 4.4 ROS topics
+### 4.3 ROS topics
 Internal parameters of the Odin ROS driver are defined in config/control_command.yaml. Below are descriptions of the commonly used parameters:
 
 | Topic               | Detailed Description |
 |---------------------|----------------------|
 | odin1/imu           | Imu Topic |
 | odin1/image         | RGB Camera Topic |
+| odin1/image/compressed         | RGB Camera compressed Topic |
 | odin1/cloud_raw     | Raw_Cloud Topic |
+| odin1/cloud_render     | Render_Cloud Topic |
 | odin1/cloud_slam    | Slam_PointCloud Topic |
 | odin1/odometry_map  | Odom Topic |
 
 ## 5. FAQ
 ### 5.1 Segmentation fault upon re-launching host SDK
 **Error Message**  
-Core dump occurs when restarting host SDK after initial successful run
+No device connected after 60 seconds 
 
 **Solution**  
-```shell
-power cycle Odin1 # Disconnect and reconnect LiDAR power
-reinitialize host SDK # Execute SDK after device reboot
-```
+1.Please power on Odin module again # Disconnect and reconnect odin power
+
+2.Reinitialize Odin SDK # Execute SDK after device reboot
+
 
 ### 5.2 Library binding failure during compilation
 
@@ -221,12 +218,18 @@ reinitialize host SDK # Execute SDK after device reboot
 ld: cannot find -llydHostApi or symbol lookup errors
 
 **Resolution** 
+
+1.Clean previous build artifacts
+
+ROS1 
 ```shell
-Clean previous build artifacts
-ROS1 rm -rf devel/ build/
-ROS2 rm -rf devel/ install/ log/
-Re-run script installation (refer to section 2.3)
-```
+rm -rf devel/ build/  
+``` 
+ROS2
+```shell
+rm -rf devel/ install/ log/ 
+``` 
+2.Re-run script installation
 
 ### 5.3 Docker GUI passthrough failure
 
@@ -237,3 +240,30 @@ Unable to open X display or No protocol specified
 ```shell
 xhost + #This command enables graphical passthrough to Docker containers
 ``` 
+
+### 5.4 RVIZ has not responded for a long time
+
+**Error Message**  
+Rviz does not respond, and after a while the terminal prints Device disconnected, waiting for reconnection...
+
+**Resolution** 
+
+Please power on Odin module again
+
+### 5.5 Device not responding
+
+**Error Message**  
+Missed ok response from device,probably wrong interaction procedure.
+
+**Resolution** 
+
+Please adopt the solution mentioned in 5.1
+
+### 5.6 Device has no external calibration file 
+
+**Error Message**  
+ERROR：Missing camera node 'cam_0'
+
+**Resolution** 
+
+Please plug and unplug the USB again
