@@ -498,33 +498,71 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
     // Set point cloud fields
     sensor_msgs::PointCloud2Modifier modifier(*msg);
     modifier.setPointCloud2Fields(
-        4,
+        5,
         "x", 1, sensor_msgs::PointField::FLOAT32,
         "y", 1, sensor_msgs::PointField::FLOAT32,
         "z", 1, sensor_msgs::PointField::FLOAT32,
-        "intensity", 1, sensor_msgs::PointField::UINT8
+        "intensity", 1, sensor_msgs::PointField::UINT8,
+        "confidence", 1, sensor_msgs::PointField::UINT16
     );
     modifier.resize(msg->height * msg->width);
 
-    // Fill point cloud data
+
     sensor_msgs::PointCloud2Iterator<float> iter_x(*msg, "x");
     sensor_msgs::PointCloud2Iterator<float> iter_y(*msg, "y");
     sensor_msgs::PointCloud2Iterator<float> iter_z(*msg, "z");
     sensor_msgs::PointCloud2Iterator<uint8_t> iter_intensity(*msg, "intensity");
+    sensor_msgs::PointCloud2Iterator<uint16_t> iter_confidence(*msg, "confidence");
 
-    float* xyz_data = static_cast<float*>(cloud.pAddr);
-    uint16_t* intensity_data = static_cast<uint16_t*>(stream->imageList[2].pAddr);
-
+    float* xyz_data_f = static_cast<float*>(cloud.pAddr);
     int total_points = cloud.height * cloud.width;
+	//std::cout << stream->imageCount << std::endl;
+	    
+    int valid_points = 0;
+    if (stream->imageCount == 4) {
+
+    uint8_t* intensity_data = static_cast<uint8_t*>(stream->imageList[2].pAddr);
+    uint16_t* confidence_data = static_cast<uint16_t*>(stream->imageList[3].pAddr);
+    
     for (int i = 0; i < total_points; ++i) {
-        float* pf = xyz_data + i * 4;
-
-        *iter_x = pf[2] / 1000.0f; ++iter_x;
-        *iter_y = -pf[0] / 1000.0f; ++iter_y;
-        *iter_z = pf[1] / 1000.0f; ++iter_z;
-        *iter_intensity = static_cast<uint8_t>(intensity_data[i] >> 8); ++iter_intensity;
+           if (confidence_data[i] < 35) {
+                continue;
+            }
+        // XYZ point
+        *iter_x = xyz_data_f[i * 3 + 2] / 1000.0f; ++iter_x;
+        *iter_y = -xyz_data_f[i * 3 + 0] / 1000.0f; ++iter_y;
+        *iter_z = xyz_data_f[i * 3 + 1] / 1000.0f; ++iter_z;
+        
+        *iter_intensity = intensity_data[i]; ++iter_intensity;
+        
+        *iter_confidence = confidence_data[i]; ++iter_confidence;
+        
+        valid_points++;
+    	}
+    } else {
+    uint16_t* intensity_data = static_cast<uint16_t*>(stream->imageList[2].pAddr);
+    
+    for (int i = 0; i < total_points; ++i) {
+        *iter_x = xyz_data_f[i * 4 + 2] / 1000.0f; ++iter_x;
+        *iter_y = -xyz_data_f[i * 4 + 0] / 1000.0f; ++iter_y;
+        *iter_z = xyz_data_f[i * 4 + 1] / 1000.0f; ++iter_z;
+        
+        float intensity = (intensity_data[i] - 10) * 255.0f / (12500 - 10);
+        if (intensity > 255) {
+            *iter_intensity = 255;
+        } else if (intensity < 0) {
+            *iter_intensity = 0;
+        } else {
+            *iter_intensity = static_cast<uint8_t>(intensity);
+        }
+        ++iter_intensity;
+        
+        *iter_confidence = 0;
+        ++iter_confidence;
+        
+        valid_points++;
     }
-
+}
 {
     std::lock_guard<std::mutex> lock(pcd_queue_mutex_);
     
@@ -847,7 +885,7 @@ private:
             rgb_pub_ = node_->create_publisher<ros::Image>("odin1/image", 10);
             cloud_pub_ = node_->create_publisher<ros::PointCloud2>("odin1/cloud_raw", 10);
             xyzrgbacloud_pub_ = node_->create_publisher<ros::PointCloud2>("odin1/cloud_slam", 10);
-            odom_publisher_ = node_->create_publisher<ros::Odometry>("odin1/odometry_map", 10);
+            odom_publisher_ = node_->create_publisher<ros::Odometry>("odin1/odometry", 10);
             rgbcloud_pub_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("odin1/cloud_render", 10);
 	    compressed_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::CompressedImage>("odin1/image/compressed", 10);
         #endif
@@ -858,7 +896,7 @@ private:
             rgb_pub_ = nh.advertise<ros::Image>("odin1/image", 10);
             cloud_pub_ = nh.advertise<ros::PointCloud2>("odin1/cloud_raw", 10);
             xyzrgbacloud_pub_ = nh.advertise<ros::PointCloud2>("odin1/cloud_slam", 10);
-            odom_publisher_ = nh.advertise<ros::Odometry>("odin1/odometry_map", 10);
+            odom_publisher_ = nh.advertise<ros::Odometry>("odin1/odometry", 10);
             rgbcloud_pub_ = nh.advertise<sensor_msgs::PointCloud2>("odin1/cloud_render", 10);
             compressed_rgb_pub_ = nh.advertise<sensor_msgs::CompressedImage>("odin1/image/compressed", 10);
         }

@@ -123,6 +123,13 @@ typedef struct {
     void *user_data;
 } lidar_data_callback_info_t;
 
+typedef struct {
+    char mcu_version[64];
+    char sys_version[64];
+    char slam_version[64];
+    char dev_app_version[64];
+    char host_app_version[64];
+} lidar_version_t;
 
 #ifdef __cplusplus
 }

@@ -16,7 +16,7 @@ This driver package provides core functionality for point cloud SLAM application
 
 ## 1. Version
 
-Current Version: v0.2
+Current Version: v0.3.0
 
 ## 2. Preparation
 
@@ -207,9 +207,9 @@ Internal parameters of the Odin ROS driver are defined in config/control_command
 No device connected after 60 seconds 
 
 **Solution**  
-1.Please power on Odin module again # Disconnect and reconnect odin power
+1. Please power on Odin module again # Disconnect and reconnect odin power
 
-2.Reinitialize Odin SDK # Execute SDK after device reboot
+2. Reinitialize Odin SDK # Execute SDK after device reboot
 
 
 ### 5.2 Library binding failure during compilation
@@ -219,7 +219,7 @@ ld: cannot find -llydHostApi or symbol lookup errors
 
 **Resolution** 
 
-1.Clean previous build artifacts
+1. Clean previous build artifacts
 
 ROS1 
 ```shell
@@ -229,7 +229,7 @@ ROS2
 ```shell
 rm -rf devel/ install/ log/ 
 ``` 
-2.Re-run script installation
+2. Re-run script installation
 
 ### 5.3 Docker GUI passthrough failure
 
@@ -267,3 +267,20 @@ ERROR：Missing camera node 'cam_0'
 **Resolution** 
 
 Please plug and unplug the USB again
+
+## 6.  Contact Information​​
+To help diagnose the issue, please provide the following details to our FAE engineer:
+
+1. ​Current firmware version​​ 
+```shell
+[device_version_capture]: ros_driver_version: [Version Number]
+``` 
+2. ​Photos of power adapter and converter cable​​ in use.
+
+3. Does the issue happen occasionally or consistently?
+
+4. Provide images of the problem scenario.
+
+5. Did the troubleshooting methods in ​​Section V​​ resolve the issue?
+
+6. Expected timeline for issue resolution.

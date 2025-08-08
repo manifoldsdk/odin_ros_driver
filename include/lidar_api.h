@@ -110,17 +110,6 @@ int lidar_open_device(device_handle device);
  * @param device Handle to the device to close
  * @return int 0 on success, negative error code on failure
  */
-int lidar_get_calib_file(device_handle device, const char* path);
-
-/**
- * @brief Get device calibration parameters
- * 
- * Retrieves the current calibration parameters from the device.
- * 
- * @param device Handle to the target device
- * @param param Pointer to receive the calibration parameters
- * @return int 0 on success, negative error code on failure
- */
 int lidar_close_device(device_handle device);
 
 /**
@@ -176,18 +165,22 @@ int lidar_activate_stream_type(device_handle device, int type);
  */
 int lidar_deactivate_stream_type(device_handle device, int type);
 
-/**
- * @brief Perform over-the-air firmware update
- * 
- * Updates the device firmware using the specified file.
- * 
- * @param device Handle to the target device
- * @param type Type of OTA update to perform
- * @param filepath Path to the firmware file
- * @param process_cb Callback function to report update progress
- * @return int 0 on success, negative error code on failure
- */
-int lidar_ota_update(device_handle device, lidar_ota_type_e type, const char* filepath, void(*process_cb)(float process));
+// /**
+//  * @brief Perform over-the-air firmware update
+//  * 
+//  * Updates the device firmware using the specified file.
+//  * 
+//  * @param device Handle to the target device
+//  * @param type Type of OTA update to perform
+//  * @param filepath Path to the firmware file
+//  * @param process_cb Callback function to report update progress
+//  * @return int 0 on success, negative error code on failure
+//  */
+// int lidar_ota_update(device_handle device, char* filepath, void(*process_cb)(float process));
+
+int ONLY_FOR_DEV_DONT_PUB_2adb(device_handle device);
+
+int lidar_get_calib_file(device_handle device, const char* path);
 
 /**
  * @brief Get device calibration parameters
@@ -219,6 +212,17 @@ int lidar_set_calibration(device_handle device, const lidar_calibration_t *param
  * @param level Log level to set (see level definitions in lidar_api_type.h)
  */
 void lidar_log_set_level(lidar_log_level_e level);
+
+/**
+ * @brief Get the version information of the LiDAR device
+ * 
+ * Retrieves version information including firmware, system, and application versions.
+ * 
+ * @param device Handle to the target device
+ * @param version struct Pointer to receive the version information
+ * @return int 0 on success, negative error code on failure
+ */
+int lidar_get_version(device_handle device);
 
 #ifdef __cplusplus
 }
