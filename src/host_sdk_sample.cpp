@@ -28,7 +28,7 @@
     #include <ros/package.h>
     #include <ros/ros.h> 
 #endif
-#define ros_driver_version "0.3.0"
+#define ros_driver_version "0.3.1"
 // Global variable declarations
 static device_handle odinDevice = nullptr;
 static std::atomic<bool> deviceConnected(false);

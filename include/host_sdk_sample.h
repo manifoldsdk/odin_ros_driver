@@ -128,9 +128,9 @@ extern int g_sendcloudrender;
 // Common definitions
 #define GD_ACCL_G 9.7833f
 #define ACC_1G_ms2 9.8
-#define ACC_SEN_SCALE 16348
+#define ACC_SEN_SCALE 4096
 #define PAI 3.14159265358979323846
-#define GYRO_SEN_SCALE 32.8f
+#define GYRO_SEN_SCALE 16.4f
 
 // Common functions
 inline float accel_convert(int16_t raw, int sen_scale) {

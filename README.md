@@ -16,7 +16,7 @@ This driver package provides core functionality for point cloud SLAM application
 
 ## 1. Version
 
-Current Version: v0.3.0
+Current Version: v0.3.1
 
 ## 2. Preparation
 
