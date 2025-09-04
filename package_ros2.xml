@@ -15,6 +15,14 @@
   <depend>nav_msgs</depend>
   <depend>cv_bridge</depend>
   <depend>image_transport</depend>
+  <depend>pcl_conversions</depend>
+  <depend>pcl_ros</depend>
+  <depend>message_filters</depend>
+  
+  <!-- System dependencies -->
+  <depend>eigen</depend>
+  <depend>opencv</depend>
+  <depend>yaml-cpp</depend>
   <!-- Specify build type as ament -->
   <export>  
     <build_type>ament_cmake</build_type>  

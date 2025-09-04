@@ -200,6 +200,9 @@ Internal parameters of the Odin ROS driver are defined in config/control_command
 | odin1/cloud_render     | Render_Cloud Topic |
 | odin1/cloud_slam    | Slam_PointCloud Topic |
 | odin1/odometry_map  | Odom Topic |
+| odin1/odometry_map  | Odom Topic |
+| /odin1/depth_img_competetion  | Depth image Topic |
+| /odin1/depth_img_competetion_cloud  | Depth_Cloud Topic |
 
 ## 5. FAQ
 ### 5.1 Segmentation fault upon re-launching host SDK

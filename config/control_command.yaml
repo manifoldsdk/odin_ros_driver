@@ -5,6 +5,7 @@ register_keys:
   sendodom: 1
   senddtof: 1
   sendcloudslam: 1
+  senddepth: 1
   sendcloudrender: 1
   sendrgbcompressed: 1
 
