@@ -28,7 +28,7 @@
     #include <ros/package.h>
     #include <ros/ros.h> 
 #endif
-#define ros_driver_version "0.3.1"
+#define ros_driver_version "0.4.0"
 // Global variable declarations
 static device_handle odinDevice = nullptr;
 static std::atomic<bool> deviceConnected(false);
@@ -64,6 +64,26 @@ int g_sendodom = 1;
 int g_sendcloudslam = 0;
 int g_sendcloudrender = 0;
 int g_sendrgb_compressed = 0;
+
+class RosNodeControlImpl : public RosNodeControlInterface {
+    public:
+        void setDtofSubframeODR(int interval) override {
+            dtof_subframe_interval_time = interval;
+        }
+        
+        int getDtofSubframeODR() const override {
+            return dtof_subframe_interval_time;
+        }
+    
+    private:
+        int dtof_subframe_interval_time = 0;
+    };
+    
+static RosNodeControlImpl g_rosNodeControlImpl;
+
+RosNodeControlInterface* getRosNodeControl() {
+    return &g_rosNodeControlImpl;
+}
 
 void clear_all_queues();
 
@@ -406,7 +426,8 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             return;
         }
         
-        if (lidar_start_stream(odinDevice, type)) {
+        uint32_t dtof_subframe_odr = 0;
+        if (lidar_start_stream(odinDevice, type, dtof_subframe_odr)) {
             #ifdef ROS2
                 RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Start stream failed");
             #else
@@ -416,6 +437,10 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             lidar_destory_device(odinDevice);
             odinDevice = nullptr;
             return;
+        }
+        
+        if (dtof_subframe_odr > 0) {
+            g_rosNodeControlImpl.setDtofSubframeODR(dtof_subframe_odr);
         }
         
         if (g_sendrgb) {

@@ -16,7 +16,7 @@ This driver package provides core functionality for point cloud SLAM application
 
 ## 1. Version
 
-Current Version: v0.3.1
+Current Version: v0.4.0
 
 ## 2. Preparation
 
@@ -199,7 +199,7 @@ Internal parameters of the Odin ROS driver are defined in config/control_command
 | odin1/cloud_raw     | Raw_Cloud Topic |
 | odin1/cloud_render     | Render_Cloud Topic |
 | odin1/cloud_slam    | Slam_PointCloud Topic |
-| odin1/odometry_map  | Odom Topic |
+| odin1/odometry      | Odom Topic |
 
 ## 5. FAQ
 ### 5.1 Segmentation fault upon re-launching host SDK

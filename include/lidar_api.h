@@ -128,9 +128,10 @@ int lidar_set_mode(device_handle device, int mode);
  * 
  * @param device Handle to the target device
  * @param type Type of data stream to start (see stream type definitions in lidar_api_type.h)
+ * @param dtof_subframe_odr DTOF subframe ODR from device, used for raw point cloud per-point time offset calculation
  * @return int 0 on success, negative error code on failure
  */
-int lidar_start_stream(device_handle device, int type);
+int lidar_start_stream(device_handle device, int type, uint32_t &dtof_subframe_odr);
 
 /**
  * @brief Stop data streaming from the device
@@ -165,44 +166,16 @@ int lidar_activate_stream_type(device_handle device, int type);
  */
 int lidar_deactivate_stream_type(device_handle device, int type);
 
-// /**
-//  * @brief Perform over-the-air firmware update
-//  * 
-//  * Updates the device firmware using the specified file.
-//  * 
-//  * @param device Handle to the target device
-//  * @param type Type of OTA update to perform
-//  * @param filepath Path to the firmware file
-//  * @param process_cb Callback function to report update progress
-//  * @return int 0 on success, negative error code on failure
-//  */
-// int lidar_ota_update(device_handle device, char* filepath, void(*process_cb)(float process));
-
-int ONLY_FOR_DEV_DONT_PUB_2adb(device_handle device);
-
+/**
+ * @brief Get calibration file from the device
+ * 
+ * Retrieves the calibration file from the device.
+ * 
+ * @param device Handle to the target device
+ * @param path Path to save the calibration file
+ * @return int 0 on success, negative error code on failure
+ */
 int lidar_get_calib_file(device_handle device, const char* path);
-
-/**
- * @brief Get device calibration parameters
- * 
- * Retrieves the current calibration parameters from the device.
- * 
- * @param device Handle to the target device
- * @param param Pointer to receive the calibration parameters
- * @return int 0 on success, negative error code on failure
- */
-int lidar_get_calibration(device_handle device, lidar_calibration_t* param);
-
-/**
- * @brief Set device calibration parameters
- * 
- * Applies new calibration parameters to the device.
- * 
- * @param device Handle to the target device
- * @param param Pointer to the calibration parameters to set
- * @return int 0 on success, negative error code on failure
- */
-int lidar_set_calibration(device_handle device, const lidar_calibration_t *param);
 
 /**
  * @brief Set log verbosity level

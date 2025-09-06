@@ -81,6 +81,15 @@ typedef struct {
     int64_t orient[4];
 } ros2_odom_convert_t;
 
+typedef struct {
+    uint64_t timestamp_ns;
+    int64_t pos[3];
+    int64_t orient[4];
+    int64_t linear_velocity[3];
+    int64_t angular_velocity[3];
+    int64_t cov[3 * 3 * 2];
+} ros_odom_convert_complete_t;
+
 typedef struct icm_6aixs_data_t {
 	int16_t aacx;
 	int16_t aacy; 

@@ -131,7 +131,7 @@ extern int g_sendcloudrender;
 #define ACC_SEN_SCALE 4096
 #define PAI 3.14159265358979323846
 #define GYRO_SEN_SCALE 16.4f
-
+#define DTOF_NUM_ROW_PER_GROUP 6
 // Common functions
 inline float accel_convert(int16_t raw, int sen_scale) {
     return (raw * GD_ACCL_G / sen_scale);
@@ -160,6 +160,15 @@ inline uint64_t ros_time_to_ns(const ros::Time &t) {
         return static_cast<uint64_t>(t.sec) * 1000000000ULL + t.nsec;
     #endif
 }
+
+class RosNodeControlInterface {
+    public:
+        virtual ~RosNodeControlInterface() = default;
+        virtual void setDtofSubframeODR(int odr) = 0;
+        virtual int getDtofSubframeODR() const = 0;
+    };
+    
+RosNodeControlInterface* getRosNodeControl();
 
 // Multi-sensor publisher class
 class MultiSensorPublisher {
@@ -498,12 +507,13 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
     // Set point cloud fields
     sensor_msgs::PointCloud2Modifier modifier(*msg);
     modifier.setPointCloud2Fields(
-        5,
+        6,
         "x", 1, sensor_msgs::PointField::FLOAT32,
         "y", 1, sensor_msgs::PointField::FLOAT32,
         "z", 1, sensor_msgs::PointField::FLOAT32,
         "intensity", 1, sensor_msgs::PointField::UINT8,
-        "confidence", 1, sensor_msgs::PointField::UINT16
+        "confidence", 1, sensor_msgs::PointField::UINT16,
+        "offset_time", 1, sensor_msgs::PointField::FLOAT32
     );
     modifier.resize(msg->height * msg->width);
 
@@ -513,77 +523,88 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
     sensor_msgs::PointCloud2Iterator<float> iter_z(*msg, "z");
     sensor_msgs::PointCloud2Iterator<uint8_t> iter_intensity(*msg, "intensity");
     sensor_msgs::PointCloud2Iterator<uint16_t> iter_confidence(*msg, "confidence");
+    sensor_msgs::PointCloud2Iterator<float> iter_offsettime(*msg, "offset_time");
 
     float* xyz_data_f = static_cast<float*>(cloud.pAddr);
     int total_points = cloud.height * cloud.width;
 	//std::cout << stream->imageCount << std::endl;
+    float dtof_subframe_odr = getRosNodeControl()->getDtofSubframeODR() / 1000.0f;
+    // printf("dtof_subframe_odr: %f\n", dtof_subframe_odr);
 	    
     int valid_points = 0;
     if (stream->imageCount == 4) {
 
-    uint8_t* intensity_data = static_cast<uint8_t*>(stream->imageList[2].pAddr);
-    uint16_t* confidence_data = static_cast<uint16_t*>(stream->imageList[3].pAddr);
+        uint8_t* intensity_data = static_cast<uint8_t*>(stream->imageList[2].pAddr);
+        uint16_t* confidence_data = static_cast<uint16_t*>(stream->imageList[3].pAddr);
     
-    for (int i = 0; i < total_points; ++i) {
-           if (confidence_data[i] < 35) {
+        for (int i = 0; i < total_points; ++i) {
+            if (confidence_data[i] < 35) {
                 continue;
             }
-        // XYZ point
-        *iter_x = xyz_data_f[i * 3 + 2] / 1000.0f; ++iter_x;
-        *iter_y = -xyz_data_f[i * 3 + 0] / 1000.0f; ++iter_y;
-        *iter_z = xyz_data_f[i * 3 + 1] / 1000.0f; ++iter_z;
-        
-        *iter_intensity = intensity_data[i]; ++iter_intensity;
-        
-        *iter_confidence = confidence_data[i]; ++iter_confidence;
-        
-        valid_points++;
+            // XYZ point
+            *iter_x = xyz_data_f[i * 3 + 2] / 1000.0f; ++iter_x;
+            *iter_y = -xyz_data_f[i * 3 + 0] / 1000.0f; ++iter_y;
+            *iter_z = xyz_data_f[i * 3 + 1] / 1000.0f; ++iter_z;
+            
+            *iter_intensity = intensity_data[i]; ++iter_intensity;
+            *iter_confidence = confidence_data[i]; ++iter_confidence;
+            
+            if (dtof_subframe_odr > 0.0) {
+                int group = i / DTOF_NUM_ROW_PER_GROUP;
+                float timestamp_offset = group * 1.0 / dtof_subframe_odr;
+
+                *iter_offsettime = timestamp_offset;
+                ++iter_offsettime;
+            }
+
+            valid_points++;
     	}
     } else {
-    uint16_t* intensity_data = static_cast<uint16_t*>(stream->imageList[2].pAddr);
-    
-    for (int i = 0; i < total_points; ++i) {
-        *iter_x = xyz_data_f[i * 4 + 2] / 1000.0f; ++iter_x;
-        *iter_y = -xyz_data_f[i * 4 + 0] / 1000.0f; ++iter_y;
-        *iter_z = xyz_data_f[i * 4 + 1] / 1000.0f; ++iter_z;
+        uint16_t* intensity_data = static_cast<uint16_t*>(stream->imageList[2].pAddr);
         
-        float intensity = (intensity_data[i] - 10) * 255.0f / (12500 - 10);
-        if (intensity > 255) {
-            *iter_intensity = 255;
-        } else if (intensity < 0) {
-            *iter_intensity = 0;
-        } else {
-            *iter_intensity = static_cast<uint8_t>(intensity);
+        for (int i = 0; i < total_points; ++i) {
+            *iter_x = xyz_data_f[i * 4 + 2] / 1000.0f; ++iter_x;
+            *iter_y = -xyz_data_f[i * 4 + 0] / 1000.0f; ++iter_y;
+            *iter_z = xyz_data_f[i * 4 + 1] / 1000.0f; ++iter_z;
+            
+            float intensity = (intensity_data[i] - 10) * 255.0f / (12500 - 10);
+            if (intensity > 255) {
+                *iter_intensity = 255;
+            } else if (intensity < 0) {
+                *iter_intensity = 0;
+            } else {
+                *iter_intensity = static_cast<uint8_t>(intensity);
+            }
+            ++iter_intensity;
+            
+            *iter_confidence = 0;
+            ++iter_confidence;
+            
+            valid_points++;
         }
-        ++iter_intensity;
-        
-        *iter_confidence = 0;
-        ++iter_confidence;
-        
-        valid_points++;
     }
-}
-{
-    std::lock_guard<std::mutex> lock(pcd_queue_mutex_);
-    
-    // Get actual point count
-    const int real_point_count = cloud.width * cloud.height;  
-    // Create deep copy of point cloud
-    #ifdef ROS2
-        auto msg_copy = std::make_shared<sensor_msgs::msg::PointCloud2>(*msg);
-    #else
-        auto msg_copy = boost::make_shared<sensor_msgs::PointCloud2>();
-        *msg_copy = *msg;  // Deep copy
-    #endif
-    
-    // Queue management
-    if (pcd_queue_.size() >= 10) {
-        pcd_queue_.pop_front();
+
+    {
+        std::lock_guard<std::mutex> lock(pcd_queue_mutex_);
+        
+        // Get actual point count
+        const int real_point_count = cloud.width * cloud.height;  
+        // Create deep copy of point cloud
+        #ifdef ROS2
+            auto msg_copy = std::make_shared<sensor_msgs::msg::PointCloud2>(*msg);
+        #else
+            auto msg_copy = boost::make_shared<sensor_msgs::PointCloud2>();
+            *msg_copy = *msg;  // Deep copy
+        #endif
+        
+        // Queue management
+        if (pcd_queue_.size() >= 10) {
+            pcd_queue_.pop_front();
+        }
+        
+        // Add to queue (using copy)
+        pcd_queue_.push_back(msg_copy);
     }
-    
-    // Add to queue (using copy)
-    pcd_queue_.push_back(msg_copy);
-}
 
     // Publish point cloud
     #ifdef ROS2
@@ -596,103 +617,155 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
     void publishRgb(capture_Image_List_t *stream) {
     buffer_List_t &image = stream->imageList[0];
 
-    try {
-        const int height_nv12 = image.height * 3 / 2;
-        cv::Mat nv12_mat(height_nv12, image.width, CV_8UC1, image.pAddr);
-        cv::Mat bgr;
-        cv::cvtColor(nv12_mat, bgr, cv::COLOR_YUV2BGR_NV12);
-
-        if (bgr.empty()) {
-            #ifndef ROS2
-                ROS_ERROR("Failed to convert NV12 to BGR");
+    // old version yuv data
+    if (image.length == image.width * image.height * 3 / 2) {
+        try {
+            const int height_nv12 = image.height * 3 / 2;
+            cv::Mat nv12_mat(height_nv12, image.width, CV_8UC1, image.pAddr);
+            cv::Mat bgr;
+            cv::cvtColor(nv12_mat, bgr, cv::COLOR_YUV2BGR_NV12);
+    
+            if (bgr.empty()) {
+                #ifndef ROS2
+                    ROS_ERROR("Failed to convert NV12 to BGR");
+                #endif
+                return;
+            }
+    
+            //Create ROS image message
+            #ifdef ROS2
+                auto header = std::make_shared<std_msgs::msg::Header>();
+                header->stamp = ns_to_ros_time(image.timestamp + 719060); // Offset compensation
+                header->frame_id = "camera_rgb_frame";
+                
+                auto cv_image = std::make_shared<cv_bridge::CvImage>(*header, "bgr8", bgr);
+                auto msg = cv_image->toImageMsg();
+            
+                // Add to unified queue
+                if (g_sendcloudrender) {
+                    std::lock_guard<std::mutex> lock(rgb_queue_mutex_);
+                    if (rgb_image_queue_.size() >= 10) {
+                        rgb_image_queue_.pop_front();
+                    }
+                    rgb_image_queue_.push_back(msg);
+                }
+    
+                // Publish original image message
+                rgb_pub_->publish(*msg);
+                
+                // Create compressed image message
+                auto compressed_msg = std::make_shared<sensor_msgs::msg::CompressedImage>();
+                compressed_msg->header = *header;
+                compressed_msg->format = "jpeg";
+                
+                // Set compression parameters
+                std::vector<int> compression_params;
+                compression_params.push_back(cv::IMWRITE_JPEG_QUALITY);
+                compression_params.push_back(80);
+                
+                // Compress image
+                cv::imencode(".jpg", bgr, compressed_msg->data, compression_params);
+                
+                compressed_rgb_pub_->publish(*compressed_msg);
+                
+            #else
+                // ROS1 version
+                std_msgs::Header header;
+                header.stamp = ns_to_ros_time(image.timestamp + 719060); // Offset compensation
+                header.frame_id = "camera_rgb_frame";
+                
+                auto cv_image = boost::make_shared<cv_bridge::CvImage>(header, "bgr8", bgr);
+                auto msg = cv_image->toImageMsg();
+                
+                // Add to unified queue
+                if (g_sendcloudrender) {
+                    std::lock_guard<std::mutex> lock(rgb_queue_mutex_);
+                    if (rgb_image_queue_.size() >= 10) {
+                        rgb_image_queue_.pop_front();
+                    }
+                    rgb_image_queue_.push_back(msg);
+                }
+                
+                // Publish original image message
+                rgb_pub_.publish(msg);
+                
+                // Publish compressed image - always publish
+                // Create compressed image message
+                sensor_msgs::CompressedImagePtr compressed_msg(new sensor_msgs::CompressedImage());
+                compressed_msg->header = header;
+                compressed_msg->format = "jpeg";
+                
+                // Set compression parameters
+                std::vector<int> compression_params;
+                compression_params.push_back(cv::IMWRITE_JPEG_QUALITY);
+                compression_params.push_back(80); // JPEG quality 80%
+                
+                // Compress image
+                cv::imencode(".jpg", bgr, compressed_msg->data, compression_params);
+                
+                compressed_rgb_pub_.publish(compressed_msg);
+                
             #endif
-            return;
+    
+        } catch (const cv::Exception& e) {
+            #ifndef ROS2
+                ROS_ERROR("OpenCV error in publishRgb: %s", e.what());
+            #endif
+        } catch (const std::exception& e) {
+            #ifndef ROS2
+                ROS_ERROR("Exception in publishRgb: %s", e.what());
+            #endif
         }
+    } else {// new version jpeg data
 
-        //Create ROS image message
+        std::vector<uint8_t> jpeg_data(static_cast<uint8_t*>(image.pAddr),
+                                        static_cast<uint8_t*>(image.pAddr) + image.length);
+
+        // convert back to bgr8                                                
+        cv::Mat decoded_image = cv::imdecode(jpeg_data, cv::IMREAD_COLOR);
+
+        cv_bridge::CvImage cv_image;
+        cv_image.header.stamp = ns_to_ros_time(stream->imageList[0].timestamp + 719060);
+        cv_image.encoding = "bgr8";
+        cv_image.image = decoded_image;
+
+        if (g_sendcloudrender) {
+            std::lock_guard<std::mutex> lock(rgb_queue_mutex_);
+            if (rgb_image_queue_.size() >= 10) {
+                rgb_image_queue_.pop_front();
+            }
+            rgb_image_queue_.push_back(cv_image.toImageMsg());
+            }        
+
         #ifdef ROS2
-            auto header = std::make_shared<std_msgs::msg::Header>();
-            header->stamp = ns_to_ros_time(image.timestamp + 719060); // Offset compensation
-            header->frame_id = "camera_rgb_frame";
-            
-            auto cv_image = std::make_shared<cv_bridge::CvImage>(*header, "bgr8", bgr);
-            auto msg = cv_image->toImageMsg();
-        
-            // Add to unified queue
-            if (g_sendcloudrender) {
-                std::lock_guard<std::mutex> lock(rgb_queue_mutex_);
-                if (rgb_image_queue_.size() >= 10) {
-                    rgb_image_queue_.pop_front();
-                }
-                rgb_image_queue_.push_back(msg);
-            }
+        {
+            rgb_pub_->publish(*cv_image.toImageMsg());
 
-            // Publish original image message
-            rgb_pub_->publish(*msg);
-            
-            // Create compressed image message
-            auto compressed_msg = std::make_shared<sensor_msgs::msg::CompressedImage>();
-            compressed_msg->header = *header;
-            compressed_msg->format = "jpeg";
-            
-            // Set compression parameters
-            std::vector<int> compression_params;
-            compression_params.push_back(cv::IMWRITE_JPEG_QUALITY);
-            compression_params.push_back(80);
-            
-            // Compress image
-            cv::imencode(".jpg", bgr, compressed_msg->data, compression_params);
-            
-            compressed_rgb_pub_->publish(*compressed_msg);
-            
+            // original jpeg
+            sensor_msgs::msg::CompressedImage jpeg_msg;
+            jpeg_msg.header.stamp = ns_to_ros_time(stream->imageList[0].timestamp + 719060);
+            jpeg_msg.format = "jpeg";
+            jpeg_msg.data = jpeg_data;
+
+            compressed_rgb_pub_->publish(jpeg_msg);
+        }
         #else
-            // ROS1 version
-            std_msgs::Header header;
-            header.stamp = ns_to_ros_time(image.timestamp + 719060); // Offset compensation
-            header.frame_id = "camera_rgb_frame";
-            
-            auto cv_image = boost::make_shared<cv_bridge::CvImage>(header, "bgr8", bgr);
-            auto msg = cv_image->toImageMsg();
-            
-            // Add to unified queue
-            if (g_sendcloudrender) {
-                std::lock_guard<std::mutex> lock(rgb_queue_mutex_);
-                if (rgb_image_queue_.size() >= 10) {
-                    rgb_image_queue_.pop_front();
-                }
-                rgb_image_queue_.push_back(msg);
-            }
-            
-            // Publish original image message
-            rgb_pub_.publish(msg);
-            
-            // Publish compressed image - always publish
-            // Create compressed image message
-            sensor_msgs::CompressedImagePtr compressed_msg(new sensor_msgs::CompressedImage());
-            compressed_msg->header = header;
-            compressed_msg->format = "jpeg";
-            
-            // Set compression parameters
-            std::vector<int> compression_params;
-            compression_params.push_back(cv::IMWRITE_JPEG_QUALITY);
-            compression_params.push_back(80); // JPEG quality 80%
-            
-            // Compress image
-            cv::imencode(".jpg", bgr, compressed_msg->data, compression_params);
-            
-            compressed_rgb_pub_.publish(compressed_msg);
-            
-        #endif
+        {
+            rgb_pub_.publish(cv_image.toImageMsg());
 
-    } catch (const cv::Exception& e) {
-        #ifndef ROS2
-            ROS_ERROR("OpenCV error in publishRgb: %s", e.what());
-        #endif
-    } catch (const std::exception& e) {
-        #ifndef ROS2
-            ROS_ERROR("Exception in publishRgb: %s", e.what());
+            // original jpeg
+            sensor_msgs::CompressedImagePtr jpeg_msg(new sensor_msgs::CompressedImage());
+            // compressed_msg->header = header;
+            // compressed_msg->format = "jpeg";
+            jpeg_msg->header.stamp = ns_to_ros_time(stream->imageList[0].timestamp + 719060);
+            jpeg_msg->format = "jpeg";
+            jpeg_msg->data = jpeg_data;
+
+            compressed_rgb_pub_.publish(jpeg_msg);
+        }
         #endif
     }
+
 }
 
 
@@ -789,7 +862,6 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
     }
 
     void publishOdometry(capture_Image_List_t* stream) {
-        ros2_odom_convert_t* odom_data = (ros2_odom_convert_t*)stream->imageList[0].pAddr;
         
         #ifdef ROS2
             auto msg = nav_msgs::msg::Odometry();
@@ -797,19 +869,56 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
             ros::Odometry msg;
         #endif
         
-            msg.header.stamp = ns_to_ros_time(odom_data->timestamp_ns);
             msg.header.frame_id = "map";
             msg.child_frame_id = "base_link";
 
-            msg.pose.pose.position.x = static_cast<double>(odom_data->pos[0]) / 1e6;
-            msg.pose.pose.position.y = static_cast<double>(odom_data->pos[1]) / 1e6;
-            msg.pose.pose.position.z = static_cast<double>(odom_data->pos[2]) / 1e6;
+            uint32_t data_len = stream->imageList[0].length;
+            if (data_len == sizeof(ros_odom_convert_complete_t)) {
 
-            msg.pose.pose.orientation.x = static_cast<double>(odom_data->orient[0]) / 1e6;
-            msg.pose.pose.orientation.y = static_cast<double>(odom_data->orient[1]) / 1e6;
-            msg.pose.pose.orientation.z = static_cast<double>(odom_data->orient[2]) / 1e6;
-            msg.pose.pose.orientation.w = static_cast<double>(odom_data->orient[3]) / 1e6;
-        
+                ros_odom_convert_complete_t* odom_data = (ros_odom_convert_complete_t*)stream->imageList[0].pAddr;
+                msg.header.stamp = ns_to_ros_time(odom_data->timestamp_ns);
+
+                msg.pose.pose.position.x = static_cast<double>(odom_data->pos[0]) / 1e6;
+                msg.pose.pose.position.y = static_cast<double>(odom_data->pos[1]) / 1e6;
+                msg.pose.pose.position.z = static_cast<double>(odom_data->pos[2]) / 1e6;
+
+                msg.pose.pose.orientation.x = static_cast<double>(odom_data->orient[0]) / 1e6;
+                msg.pose.pose.orientation.y = static_cast<double>(odom_data->orient[1]) / 1e6;
+                msg.pose.pose.orientation.z = static_cast<double>(odom_data->orient[2]) / 1e6;
+                msg.pose.pose.orientation.w = static_cast<double>(odom_data->orient[3]) / 1e6;
+
+                msg.twist.twist.linear.x = static_cast<double>(odom_data->linear_velocity[0]) / 1e6;
+                msg.twist.twist.linear.y = static_cast<double>(odom_data->linear_velocity[1]) / 1e6;
+                msg.twist.twist.linear.z = static_cast<double>(odom_data->linear_velocity[2]) / 1e6;
+
+                msg.twist.twist.angular.x = static_cast<double>(odom_data->angular_velocity[0]) / 1e6;
+                msg.twist.twist.angular.y = static_cast<double>(odom_data->angular_velocity[1]) / 1e6;
+                msg.twist.twist.angular.z = static_cast<double>(odom_data->angular_velocity[2]) / 1e6;
+
+                msg.pose.covariance = {
+                    static_cast<double>(odom_data->cov[0]) / 1e9, static_cast<double>(odom_data->cov[1]) / 1e9, static_cast<double>(odom_data->cov[2]) / 1e9, 0.0, 0.0, 0.0,
+                    static_cast<double>(odom_data->cov[3]) / 1e9, static_cast<double>(odom_data->cov[4]) / 1e9, static_cast<double>(odom_data->cov[5]) / 1e9, 0.0, 0.0, 0.0,
+                    static_cast<double>(odom_data->cov[6]) / 1e9, static_cast<double>(odom_data->cov[7]) / 1e9, static_cast<double>(odom_data->cov[8]) / 1e9, 0.0, 0.0, 0.0,
+                    0.0, 0.0, 0.0, static_cast<double>(odom_data->cov[9]) / 1e9, static_cast<double>(odom_data->cov[10]) / 1e9, static_cast<double>(odom_data->cov[11]) / 1e9,
+                    0.0, 0.0, 0.0, static_cast<double>(odom_data->cov[12]) / 1e9, static_cast<double>(odom_data->cov[13]) / 1e9, static_cast<double>(odom_data->cov[14]) / 1e9,
+                    0.0, 0.0, 0.0, static_cast<double>(odom_data->cov[15]) / 1e9, static_cast<double>(odom_data->cov[16]) / 1e9, static_cast<double>(odom_data->cov[17]) / 1e9,
+                };
+            
+            } else if (data_len == sizeof(ros2_odom_convert_t)) {
+
+                ros2_odom_convert_t* odom_data = (ros2_odom_convert_t*)stream->imageList[0].pAddr;
+                msg.header.stamp = ns_to_ros_time(odom_data->timestamp_ns);
+
+                msg.pose.pose.position.x = static_cast<double>(odom_data->pos[0]) / 1e6;
+                msg.pose.pose.position.y = static_cast<double>(odom_data->pos[1]) / 1e6;
+                msg.pose.pose.position.z = static_cast<double>(odom_data->pos[2]) / 1e6;
+
+                msg.pose.pose.orientation.x = static_cast<double>(odom_data->orient[0]) / 1e6;
+                msg.pose.pose.orientation.y = static_cast<double>(odom_data->orient[1]) / 1e6;
+                msg.pose.pose.orientation.z = static_cast<double>(odom_data->orient[2]) / 1e6;
+                msg.pose.pose.orientation.w = static_cast<double>(odom_data->orient[3]) / 1e6;
+            }
+
         #ifdef ROS2
             odom_publisher_->publish(std::move(msg));
         #else
