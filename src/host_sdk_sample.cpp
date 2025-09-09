@@ -21,6 +21,8 @@
 #include <vector>
 #include <cstdio>
 #include <array>
+#include <yaml-cpp/yaml.h>
+#include <iomanip>
 #ifdef ROS2
     #include <ament_index_cpp/get_package_share_directory.hpp>
     #include <rclcpp/rclcpp.hpp>
@@ -28,7 +30,7 @@
     #include <ros/package.h>
     #include <ros/ros.h> 
 #endif
-#define ros_driver_version "0.4.0"
+#define ros_driver_version "0.4.1"
 // Global variable declarations
 static device_handle odinDevice = nullptr;
 static std::atomic<bool> deviceConnected(false);
@@ -52,6 +54,7 @@ static bool g_has_rgb = false;
 static capture_Image_List_t g_latest_rgb;
 static bool g_renderer_initialized = false;
 static std::shared_ptr<rawCloudRender> g_renderer = nullptr;
+std::string calib_file_ = "";
 
  // usb device
 static std::string TARGET_VENDOR = "2207";
@@ -64,6 +67,7 @@ int g_sendodom = 1;
 int g_sendcloudslam = 0;
 int g_sendcloudrender = 0;
 int g_sendrgb_compressed = 0;
+int g_record_data = 0;
 
 class RosNodeControlImpl : public RosNodeControlInterface {
     public:
@@ -168,6 +172,123 @@ bool isUsbDevicePresent(const std::string& vendorId, const std::string& productI
     }
     return false;
 }
+// Convert calib.yaml to cam_in_ex.txt
+static bool convert_calib_to_cam_in_ex(const std::string& calib_path, const std::filesystem::path& out_path) {
+    try {
+        if (calib_path.empty()) {
+            #ifdef ROS2
+                RCLCPP_WARN(rclcpp::get_logger("device_cb"), "calib_file_ is empty, skip writing cam_in_ex.txt");
+            #else
+                ROS_WARN("calib_file_ is empty, skip writing cam_in_ex.txt");
+            #endif
+            return false;
+        }
+
+        YAML::Node root = YAML::LoadFile(calib_path);
+
+        // Read Tcl_0 matrix (16 values)
+        std::array<double, 16> Tcl{};
+        YAML::Node tcl = root["Tcl_0"];
+        for (size_t i = 0; i < 16; ++i) {
+            if (tcl && tcl.IsSequence() && i < tcl.size()) {
+                Tcl[i] = tcl[i].as<double>();
+            } else {
+                // Default last row to [0,0,0,1] if missing, others 0
+                Tcl[i] = (i == 15) ? 1.0 : 0.0;
+            }
+        }
+
+        // Read cam_0 parameters (with defaults)
+        YAML::Node cam0 = root["cam_0"];
+        auto get_i = [&](const char* key, int def) -> int {
+            return (cam0 && cam0[key]) ? cam0[key].as<int>() : def;
+        };
+        auto get_d = [&](const char* key, double def) -> double {
+            return (cam0 && cam0[key]) ? cam0[key].as<double>() : def;
+        };
+
+        int image_width = get_i("image_width", 0);
+        int image_height = get_i("image_height", 0);
+        double k2 = get_d("k2", 0.0);
+        double k3 = get_d("k3", 0.0);
+        double k4 = get_d("k4", 0.0);
+        double k5 = get_d("k5", 0.0);
+        double k6 = get_d("k6", 0.0);
+        double k7 = get_d("k7", 0.0);
+        double p1 = get_d("p1", 0.0);
+        double p2 = get_d("p2", 0.0);
+        double A11 = get_d("A11", 0.0);
+        double A12 = get_d("A12", 0.0);
+        double A22 = get_d("A22", 0.0);
+        double u0 = get_d("u0", 0.0);
+        double v0 = get_d("v0", 0.0);
+
+        // Ensure parent directory exists
+        std::error_code ec;
+        std::filesystem::create_directories(out_path.parent_path(), ec);
+
+        // Truncate file then write content
+        std::ofstream ofs(out_path, std::ios::out | std::ios::trunc);
+        if (!ofs.is_open()) {
+            #ifdef ROS2
+                RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Failed to open cam_in_ex.txt for write: %s", out_path.string().c_str());
+            #else
+                ROS_ERROR("Failed to open cam_in_ex.txt for write: %s", out_path.string().c_str());
+            #endif
+            return false;
+        }
+
+        auto fmt = [](double v) {
+            std::ostringstream ss; ss.setf(std::ios::fixed); ss << std::setprecision(6) << v; return ss.str();
+        };
+
+        // Write Tcl_0 with line breaks every 4 elements
+        ofs << "Tcl_0: [";
+        for (int i = 0; i < 16; ++i) {
+            if (i > 0) {
+                ofs << ", ";
+                if (i % 4 == 0) ofs << "\n        ";
+            }
+            ofs << fmt(Tcl[i]);
+        }
+        ofs << "]\n";
+
+        // Write cam_0 block
+        ofs << "cam_0: \n";
+        ofs << "   image_width: " << image_width << "\n";
+        ofs << "   image_height: " << image_height << "\n";
+        ofs << "   k2: " << fmt(k2) << "\n";
+        ofs << "   k3: " << fmt(k3) << "\n";
+        ofs << "   k4: " << fmt(k4) << "\n";
+        ofs << "   k5: " << fmt(k5) << "\n";
+        ofs << "   k6: " << fmt(k6) << "\n";
+        ofs << "   k7: " << fmt(k7) << "\n";
+        ofs << "   p1: " << fmt(p1) << "\n";
+        ofs << "   p2: " << fmt(p2) << "\n";
+        ofs << "   A11: " << fmt(A11) << "\n";
+        ofs << "   A12: " << fmt(A12) << "\n";
+        ofs << "   A22: " << fmt(A22) << "\n";
+        ofs << "   u0: " << fmt(u0) << "\n";
+        ofs << "   v0: " << fmt(v0) << "\n";
+
+        ofs.flush();
+
+        #ifdef ROS2
+            RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Wrote cam_in_ex.txt to: %s", out_path.string().c_str());
+        #else
+            ROS_INFO("Wrote cam_in_ex.txt to: %s", out_path.string().c_str());
+        #endif
+        return true;
+    } catch (const std::exception& e) {
+        #ifdef ROS2
+            RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Failed to convert calib.yaml: %s", e.what());
+        #else
+            ROS_ERROR("Failed to convert calib.yaml: %s", e.what());
+        #endif
+        return false;
+    }
+}
+
 // Get package share path
 std::string get_package_share_path(const std::string& package_name) {
 #ifdef ROS2
@@ -185,7 +306,24 @@ std::string get_package_share_path(const std::string& package_name) {
 #endif
 }
 
-// Get package path
+std::string get_package_source_directory() {
+    // 获取当前源文件的绝对路径
+    std::filesystem::path current_file(__FILE__);
+    
+    // 回溯到包根目录（包含package.xml的目录）
+    auto path = current_file.parent_path();
+    while (!path.empty() && !std::filesystem::exists(path / "package.xml")) {
+        path = path.parent_path();
+    }
+    
+    if (path.empty()) {
+        throw std::runtime_error("Failed to locate package root directory");
+    }
+    
+    return path.string();
+}
+
+
 std::string get_package_path(const std::string& package_name) {
     #ifdef ROS2
         return ament_index_cpp::get_package_share_directory(package_name);
@@ -322,7 +460,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
 	#else
 	    config_dir = ros::package::getPath(package_name) + "/config";
 	#endif
-
+   		 std::cout << "config_dir"<< config_dir <<std::endl;
         #ifdef ROS2
             RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Calibration files will be saved to: %s", config_dir.c_str());
         #else
@@ -353,6 +491,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             printf("get version failed.\n");
         }
         else {
+            printf("ros_driver_version:%s\n", ros_driver_version);
             printf("get version success.\n");
         }
         
@@ -375,6 +514,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         #endif
         
         std::string calib_config = config_dir + "/calib.yaml";
+        calib_file_ = calib_config;
         if (std::filesystem::exists(calib_config)) {
             g_renderer = std::make_shared<rawCloudRender>();
             if (g_renderer->init(calib_config)) {
@@ -504,7 +644,12 @@ int main(int argc, char *argv[])
 #endif
 
     try {
-        std::string package_path = get_package_share_path("odin_ros_driver");
+    #ifdef ROS2
+        std::string package_path = get_package_source_directory();
+        std::cout << "package_path: " << package_path << std::endl;
+    #else
+    	std::string package_path = get_package_share_path("odin_ros_driver");
+    #endif
         std::string config_file = package_path + "/config/control_command.yaml";   
       
         odin_ros_driver::YamlParser parser(config_file);
@@ -532,8 +677,32 @@ int main(int argc, char *argv[])
         g_sendcloudslam = get_key_value("sendcloudslam", 0);
         g_sendcloudrender = get_key_value("sendcloudrender", 1);
         g_sendrgb_compressed = get_key_value("sendrgbcompressed", 1);
+        g_record_data = get_key_value("recorddata", 0);
         g_log_level = get_key_value("log_devel", LOG_LEVEL_INFO);
         lidar_log_set_level(LIDAR_LOG_INFO);
+
+        if (g_record_data) {
+            const std::string package_name = "odin_ros_driver";
+            std::string data_dir = "";
+            #ifdef ROS2
+                char* ros_workspace = std::getenv("COLCON_PREFIX_PATH");
+                if (ros_workspace) {
+                std::string workspace_path(ros_workspace);
+                size_t pos = workspace_path.find("/install");
+                if (pos != std::string::npos) {
+                    data_dir = workspace_path.substr(0, pos) + "/src/odin_ros_driver/recorddata";
+                } else {
+                    data_dir = ament_index_cpp::get_package_share_directory(package_name) + "/recorddata";
+                }
+                } else {
+                data_dir = ament_index_cpp::get_package_share_directory(package_name) + "/recorddata";
+                }
+            #else
+                data_dir = ros::package::getPath(package_name) + "/recorddata";
+            #endif
+
+            g_ros_object->initialize_data_logger(data_dir);
+        }
 
         if (lidar_system_init(lidar_device_callback)) {
             #ifdef ROS2
@@ -639,13 +808,29 @@ int main(int argc, char *argv[])
 
     // Cleanup on normal program exit
     if (odinDevice) {
+        // Convert calib.yaml to cam_in_ex.txt at program end
+        if (g_ros_object) {
+            const std::filesystem::path out_path = g_ros_object->get_root_dir() / "image" / "cam_in_ex.txt";
+            (void)convert_calib_to_cam_in_ex(calib_file_, out_path);
+        }
+        #ifdef ROS2
+            RCLCPP_INFO(rclcpp::get_logger("device_cb"), "pose_index: %d", g_ros_object->get_pose_index());
+            RCLCPP_INFO(rclcpp::get_logger("device_cb"), "cloud_index: %d", g_ros_object->get_cloud_index());
+            RCLCPP_INFO(rclcpp::get_logger("device_cb"), "image_index: %d", g_ros_object->get_image_index());
+        #else
+            ROS_INFO("pose_index: %d", g_ros_object->get_pose_index());
+            ROS_INFO("cloud_index: %d", g_ros_object->get_cloud_index());
+            ROS_INFO("image_index: %d", g_ros_object->get_image_index());
+        #endif
         // Perform cleanup on normal exit
-        lidar_stop_stream(odinDevice, LIDAR_MODE_SLAM);
-        lidar_unregister_stream_callback(odinDevice);
-        lidar_close_device(odinDevice);
-        lidar_destory_device(odinDevice);
+        // lidar_stop_stream(odinDevice, LIDAR_MODE_SLAM);
+        // lidar_unregister_stream_callback(odinDevice);
+        // lidar_close_device(odinDevice);
+        // lidar_destory_device(odinDevice);
     }
-    lidar_system_deinit();
+    // lidar_system_deinit();
+
+
 
     return 0;
 }

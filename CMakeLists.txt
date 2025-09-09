@@ -98,8 +98,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find common dependencies
 find_package(PkgConfig REQUIRED)
-find_package(OpenCV REQUIRED COMPONENTS core imgproc highgui)
+find_package(OpenCV REQUIRED)
 find_package(Eigen3 REQUIRED)
+find_package(PCL REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(OpenSSL REQUIRED)
 pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
@@ -109,6 +110,7 @@ include_directories(
     include
     ${EIGEN3_INCLUDE_DIRS}
     ${OpenCV_INCLUDE_DIRS}
+    ${PCL_INCLUDE_DIRS}
     ${yaml-cpp_INCLUDE_DIR}
     ${LIBUSB_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -117,6 +119,7 @@ include_directories(
 # Shared library list
 set(COMMON_LIBS
     ${OpenCV_LIBS}
+    ${PCL_LIBRARIES}
     ${yaml-cpp_LIBRARIES}
     ${OPENSSL_LIBRARIES}
     ${LIBUSB_LIBRARIES}
@@ -166,7 +169,27 @@ if(ROS_VERSION STREQUAL "ROS1")
     	pthread  
         usb-1.0
     )
-    
+
+    add_library(pointcloud_depth_converter src/pointcloud_depth_converter.cpp)
+    target_link_libraries(pointcloud_depth_converter
+    ${OpenCV_LIBS}
+    ${PCL_LIBRARIES}
+    )
+    add_library(depth_image_ros_node src/depth_image_ros_node.cpp)
+    target_link_libraries(depth_image_ros_node
+    pointcloud_depth_converter
+    ${catkin_LIBRARIES}
+    ${OpenCV_LIBS}
+    ${PCL_LIBRARIES}
+    )
+    add_executable(pcd2depth_node src/pcd2depth_ros.cpp)
+    target_link_libraries(pcd2depth_node
+    depth_image_ros_node
+    ${catkin_LIBRARIES}
+    ${OpenCV_LIBS}
+    ${PCL_LIBRARIES}
+    )
+
     # Installation rules
     install(TARGETS host_sdk_sample
         RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
@@ -194,6 +217,8 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     find_package(nav_msgs REQUIRED)
     find_package(cv_bridge REQUIRED)
     find_package(image_transport REQUIRED)
+    find_package(pcl_conversions REQUIRED)
+    find_package(message_filters REQUIRED)
     
     # Create executable
     add_executable(host_sdk_sample 
@@ -220,9 +245,53 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         image_transport
     )
     
+
+    add_library(pointcloud_depth_converter_ros2 src/pointcloud_depth_converter.cpp)
+    target_link_libraries(pointcloud_depth_converter_ros2
+        ${OpenCV_LIBS}
+        ${PCL_LIBRARIES}
+    )
+    
+    add_library(depth_image_ros2_node_lib src/depth_image_ros2_node.cpp)
+    target_link_libraries(depth_image_ros2_node_lib
+        pointcloud_depth_converter_ros2
+        ${OpenCV_LIBS}
+        ${PCL_LIBRARIES}
+    )
+    
+    ament_target_dependencies(depth_image_ros2_node_lib
+        rclcpp
+        sensor_msgs
+        std_msgs
+        cv_bridge
+        image_transport
+        pcl_conversions
+        message_filters
+    )
+
+    add_executable(pcd2depth_ros2_node src/pcd2depth_ros2.cpp)
+    target_link_libraries(pcd2depth_ros2_node
+        depth_image_ros2_node_lib
+        ${OpenCV_LIBS}
+        ${PCL_LIBRARIES}
+        yaml-cpp
+    )
+    
+    ament_target_dependencies(pcd2depth_ros2_node
+        rclcpp
+        sensor_msgs
+        std_msgs
+        cv_bridge
+        image_transport
+        pcl_conversions
+        message_filters
+    )
+
     # Installation rules - ensure all install targets are defined before ament_package()
     # Install executable
-    install(TARGETS host_sdk_sample
+    install(TARGETS 
+        host_sdk_sample 
+        pcd2depth_ros2_node
         EXPORT export_${PROJECT_NAME}
         ARCHIVE DESTINATION lib
         LIBRARY DESTINATION lib
@@ -269,6 +338,8 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         nav_msgs 
         cv_bridge
         image_transport
+        pcl_conversions
+        message_filters
     )
     
     ament_package()

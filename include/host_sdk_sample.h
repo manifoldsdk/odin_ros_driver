@@ -24,10 +24,14 @@ limitations under the License.
 #include <fstream>
 #include <sstream>
 #include <iomanip>
+#include <cstring>
 #include <opencv2/opencv.hpp>
 #include <cv_bridge/cv_bridge.h>
 #include <thread>
 #include <Eigen/Dense>
+#include <atomic>
+#include <unordered_map>
+#include "data_logger.h"
 #include "lidar_api.h"
 #include "lidar_api_type.h"
 #include "rawCloudRender.h"
@@ -53,17 +57,15 @@ extern int g_sendcloudrender;
 
     #include "rclcpp/rclcpp.hpp"
     #include "std_msgs/msg/string.hpp"
+    #include <std_msgs/msg/header.hpp>
     #include "sensor_msgs/msg/image.hpp"
     #include "sensor_msgs/msg/imu.hpp"
     #include "sensor_msgs/msg/point_cloud2.hpp"
     #include "sensor_msgs/point_cloud2_iterator.hpp"
-    #include <sensor_msgs/msg/imu.hpp>
+    #include <sensor_msgs/msg/compressed_image.hpp>
+    #include <builtin_interfaces/msg/time.hpp>
     #include <nav_msgs/msg/odometry.hpp>
-    #include <sensor_msgs/msg/point_cloud2.hpp>
     #include <sensor_msgs/msg/point_field.hpp>
-    #include <sensor_msgs/msg/image.hpp>
-    using ImageConstPtr = sensor_msgs::msg::Image::ConstSharedPtr;
-    using PointCloud2ConstPtr = sensor_msgs::msg::PointCloud2::ConstSharedPtr;
     namespace ros {
         using namespace rclcpp;
         using namespace std_msgs::msg;
@@ -82,13 +84,13 @@ extern int g_sendcloudrender;
     #include <ros/ros.h>
     #include <ros/package.h>
     #include <sensor_msgs/Image.h>
+    #include <std_msgs/Header.h>
     #include <sensor_msgs/Imu.h>
     #include <sensor_msgs/PointCloud2.h>
     #include <sensor_msgs/point_cloud2_iterator.h>
+    #include <sensor_msgs/CompressedImage.h>
     #include <nav_msgs/Odometry.h>
     #include <sensor_msgs/Image.h>
-    using ImageConstPtr = sensor_msgs::ImageConstPtr;
-    using PointCloud2ConstPtr = sensor_msgs::PointCloud2ConstPtr;
     namespace ros {
         using namespace ::ros;
         using namespace sensor_msgs;
@@ -177,15 +179,35 @@ public:
         MultiSensorPublisher(rclcpp::Node::SharedPtr node)
             : node_(node) {
             initialize_publishers();
+            // initialize_data_logger();
         }
     #else
         MultiSensorPublisher(ros::NodeHandle& nh) {
             initialize_publishers(nh);
+            // initialize_data_logger();
         }
     #endif
     
+    std::filesystem::path get_root_dir() const { return root_dir_; }
+
     void set_log_level(int level) {
         g_log_level = level;
+    }
+    // Optional external logger setter
+    void set_data_logger(std::shared_ptr<BinaryDataLogger> logger) {
+        data_logger_ = std::move(logger);
+    }
+
+    int get_pose_index() {
+        return pose_index_.load();
+    }
+
+    int get_cloud_index() {
+        return cloud_index_.load();
+    }
+
+    int get_image_index() {
+        return image_index_.load();
     }
  
     rawCloudRender render_;
@@ -636,6 +658,8 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
             #ifdef ROS2
                 auto header = std::make_shared<std_msgs::msg::Header>();
                 header->stamp = ns_to_ros_time(image.timestamp + 719060); // Offset compensation
+
+                //RCLCPP_INFO(rclcpp::get_logger("device_cb"), "image rgb %ld",image.timestamp + 719060);
                 header->frame_id = "camera_rgb_frame";
                 
                 auto cv_image = std::make_shared<cv_bridge::CvImage>(*header, "bgr8", bgr);
@@ -664,7 +688,25 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
                 compression_params.push_back(80);
                 
                 // Compress image
-                cv::imencode(".jpg", bgr, compressed_msg->data, compression_params);
+                cv::imencode(".JPEG", bgr, compressed_msg->data, compression_params);
+
+                // Enqueue binary logging for image
+                if (data_logger_) {
+                    const uint32_t idx_now = image_index_.fetch_add(1, std::memory_order_relaxed);
+                    const double ts_sec = static_cast<double>(image.timestamp + 719060) / 1e9;
+                    const uint32_t jpeg_size = static_cast<uint32_t>(compressed_msg->data.size());
+                    std::vector<uint8_t> blob;
+                    blob.reserve(sizeof(uint32_t) + sizeof(double) + sizeof(uint32_t) + jpeg_size);
+                    auto append_pod = [&](const auto& v) {
+                        const uint8_t* p = reinterpret_cast<const uint8_t*>(&v);
+                        blob.insert(blob.end(), p, p + sizeof(v));
+                    };
+                    append_pod(idx_now);
+                    append_pod(ts_sec);
+                    append_pod(jpeg_size);
+                    blob.insert(blob.end(), compressed_msg->data.begin(), compressed_msg->data.end());
+                    data_logger_->enqueueImageFrame(std::move(blob));
+                }
                 
                 compressed_rgb_pub_->publish(*compressed_msg);
                 
@@ -702,7 +744,25 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
                 
                 // Compress image
                 cv::imencode(".jpg", bgr, compressed_msg->data, compression_params);
-                
+
+                // Enqueue binary logging for image
+                if (data_logger_) {
+                    const uint32_t idx_now = image_index_.fetch_add(1, std::memory_order_relaxed);
+                    // Convert ROS1 header.stamp to seconds
+                    const double ts_sec = static_cast<double>(header.stamp.sec) + static_cast<double>(header.stamp.nsec) / 1e9;
+                    const uint32_t jpeg_size = static_cast<uint32_t>(compressed_msg->data.size());
+                    std::vector<uint8_t> blob;
+                    blob.reserve(sizeof(uint32_t) + sizeof(double) + sizeof(uint32_t) + jpeg_size);
+                    auto append_pod = [&](const auto& v) {
+                        const uint8_t* p = reinterpret_cast<const uint8_t*>(&v);
+                        blob.insert(blob.end(), p, p + sizeof(v));
+                    };
+                    append_pod(idx_now);
+                    append_pod(ts_sec);
+                    append_pod(jpeg_size);
+                    blob.insert(blob.end(), compressed_msg->data.begin(), compressed_msg->data.end());
+                    data_logger_->enqueueImageFrame(std::move(blob));
+                }
                 compressed_rgb_pub_.publish(compressed_msg);
                 
             #endif
@@ -736,6 +796,24 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
             }
             rgb_image_queue_.push_back(cv_image.toImageMsg());
             }        
+
+        // Enqueue binary logging for image
+        if (data_logger_) {
+            const uint32_t idx_now = image_index_.fetch_add(1, std::memory_order_relaxed);
+            const double ts_sec = static_cast<double>(stream->imageList[0].timestamp + 719060) / 1e9;
+            const uint32_t jpeg_size = static_cast<uint32_t>(jpeg_data.size());
+            std::vector<uint8_t> blob;
+            blob.reserve(sizeof(uint32_t) + sizeof(double) + sizeof(uint32_t) + jpeg_size);
+            auto append_pod = [&](const auto& v) {
+                const uint8_t* p = reinterpret_cast<const uint8_t*>(&v);
+                blob.insert(blob.end(), p, p + sizeof(v));
+            };
+            append_pod(idx_now);
+            append_pod(ts_sec);
+            append_pod(jpeg_size);
+            blob.insert(blob.end(), jpeg_data.begin(), jpeg_data.end());
+            data_logger_->enqueueImageFrame(std::move(blob));
+        }
 
         #ifdef ROS2
         {
@@ -775,6 +853,9 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
                 sensor_msgs::msg::PointCloud2 msg;
                 msg.header.frame_id = "map";
                 msg.header.stamp = ns_to_ros_time(stream->imageList[0].timestamp);
+  
+                //RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Point cloudrgba %ld",stream->imageList[0].timestamp);
+
                 size_t pt_size = sizeof(int32_t) * 3 + sizeof(int32_t) * 4;
                 uint32_t points = stream->imageList[idx].length / pt_size;
 
@@ -830,15 +911,15 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
         for(uint32_t i = 0; i < points; i++) {
             int32_t* ptr = xyz_data + 7*i;
             
-            #ifdef ROS2
+#ifdef ROS2
                 *iter_x = static_cast<float>(ptr[0]) / 10000.0f; ++iter_x;
                 *iter_y = static_cast<float>(ptr[1]) / 10000.0f; ++iter_y;
                 *iter_z = static_cast<float>(ptr[2]) / 10000.0f; ++iter_z;
-            #else
+#else
                 *iter_x = (1.0 * ptr[0]) / 1e4; ++iter_x;
                 *iter_y = (1.0 * ptr[1]) / 1e4; ++iter_y;
                 *iter_z = (1.0 * ptr[2]) / 1e4; ++iter_z;
-            #endif
+#endif
             
             uint8_t r = ptr[3] & 0xff;
             uint8_t g = ptr[4] & 0xff;
@@ -853,24 +934,61 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
             
             *iter_rgb = rgb_float; ++iter_rgb;
         }
+
+        // Enqueue binary logging for point cloud (XYZRGB per point)
+        if (data_logger_ && points > 0) {
+            const double ts_sec = static_cast<double>(stream->imageList[0].timestamp) / 1e9;
+            const uint32_t idx_now = cloud_index_.fetch_add(1, std::memory_order_relaxed);
+            // Compute total blob size: header + per-point payload
+            const size_t header_size = sizeof(uint32_t) + sizeof(double) + sizeof(uint32_t);
+            const size_t point_size = sizeof(float) * 3 + sizeof(uint8_t) * 3;
+            std::vector<uint8_t> blob;
+            blob.reserve(header_size + static_cast<size_t>(points) * point_size);
+            auto append_pod = [&](const auto& v) {
+                const uint8_t* p = reinterpret_cast<const uint8_t*>(&v);
+                blob.insert(blob.end(), p, p + sizeof(v));
+            };
+            append_pod(idx_now);
+            append_pod(ts_sec);
+            append_pod(points);
+
+            for (uint32_t i = 0; i < points; ++i) {
+                int32_t* ptr = xyz_data + 7 * i;
+                float fx = static_cast<float>(ptr[0]) / 10000.0f;
+                float fy = static_cast<float>(ptr[1]) / 10000.0f;
+                float fz = static_cast<float>(ptr[2]) / 10000.0f;
+                uint8_t r = static_cast<uint8_t>(ptr[3] & 0xff);
+                uint8_t g = static_cast<uint8_t>(ptr[4] & 0xff);
+                uint8_t b = static_cast<uint8_t>(ptr[5] & 0xff);
+                append_pod(fx);
+                append_pod(fy);
+                append_pod(fz);
+                blob.push_back(r);
+                blob.push_back(g);
+                blob.push_back(b);
+            }
+            data_logger_->enqueuePointCloudFrame(std::move(blob));
+        }
         
-        #ifdef ROS2
+#ifdef ROS2
             xyzrgbacloud_pub_->publish(std::move(msg));
-        #else
+#else
             xyzrgbacloud_pub_.publish(msg);
-        #endif
+#endif
     }
 
     void publishOdometry(capture_Image_List_t* stream) {
         
-        #ifdef ROS2
+#ifdef ROS2
             auto msg = nav_msgs::msg::Odometry();
-        #else
+#else
             ros::Odometry msg;
-        #endif
+#endif
         
             msg.header.frame_id = "map";
             msg.child_frame_id = "base_link";
+
+            //RCLCPP_INFO(rclcpp::get_logger("device_cb"), "odom %ld",odom_data->timestamp_ns);
 
             uint32_t data_len = stream->imageList[0].length;
             if (data_len == sizeof(ros_odom_convert_complete_t)) {
@@ -887,6 +1005,30 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
                 msg.pose.pose.orientation.z = static_cast<double>(odom_data->orient[2]) / 1e6;
                 msg.pose.pose.orientation.w = static_cast<double>(odom_data->orient[3]) / 1e6;
 
+                // Enqueue binary logging for pose
+                if (data_logger_) {
+                    const uint32_t idx_now = pose_index_.fetch_add(1, std::memory_order_relaxed);
+                    const double ts_sec = static_cast<double>(odom_data->timestamp_ns) / 1e9;
+                    float pose_arr[7];
+                    pose_arr[0] = static_cast<float>(msg.pose.pose.position.x);
+                    pose_arr[1] = static_cast<float>(msg.pose.pose.position.y);
+                    pose_arr[2] = static_cast<float>(msg.pose.pose.position.z);
+                    pose_arr[3] = static_cast<float>(msg.pose.pose.orientation.x);
+                    pose_arr[4] = static_cast<float>(msg.pose.pose.orientation.y);
+                    pose_arr[5] = static_cast<float>(msg.pose.pose.orientation.z);
+                    pose_arr[6] = static_cast<float>(msg.pose.pose.orientation.w);
+                    std::vector<uint8_t> blob;
+                    blob.reserve(sizeof(uint32_t) + sizeof(double) + sizeof(float) * 7);
+                    auto append_pod = [&](const auto& v) {
+                        const uint8_t* p = reinterpret_cast<const uint8_t*>(&v);
+                        blob.insert(blob.end(), p, p + sizeof(v));
+                    };
+                    append_pod(idx_now);
+                    append_pod(ts_sec);
+                    for (int i = 0; i < 7; ++i) append_pod(pose_arr[i]);
+                    data_logger_->enqueuePoseFrame(std::move(blob));
+                }
+        
                 msg.twist.twist.linear.x = static_cast<double>(odom_data->linear_velocity[0]) / 1e6;
                 msg.twist.twist.linear.y = static_cast<double>(odom_data->linear_velocity[1]) / 1e6;
                 msg.twist.twist.linear.z = static_cast<double>(odom_data->linear_velocity[2]) / 1e6;
@@ -919,11 +1061,31 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
                 msg.pose.pose.orientation.w = static_cast<double>(odom_data->orient[3]) / 1e6;
             }
 
-        #ifdef ROS2
+#ifdef ROS2
             odom_publisher_->publish(std::move(msg));
-        #else
+#else
             odom_publisher_.publish(msg);
-        #endif
+#endif
+    }
+
+    void initialize_data_logger(std::string data_dir = "") {
+
+        try {
+            BinaryDataLogger::Options opts;
+            opts.batch_size = 100;
+            opts.base_dir = data_dir;
+            data_logger_ = std::make_shared<BinaryDataLogger>(opts);
+            root_dir_ = data_logger_->root_dir();
+            #ifdef ROS2
+                RCLCPP_INFO(node_->get_logger(), "Data logger initialized at %s", root_dir_.c_str());
+            #endif
+        } catch (...) {
+            // Swallow logger initialization failures to avoid affecting runtime
+            #ifdef ROS2
+                RCLCPP_INFO(node_->get_logger(), "Failed to initialize data logger");
+            #endif
+            data_logger_.reset();
+        }
     }
 
 private:
@@ -936,6 +1098,13 @@ private:
     std::deque<PointCloud2ConstPtr> pcd_queue_;
     const size_t max_pcd_queue_size_ = 10; // Maximum cache frames
 
+    // Binary logger and frame indices
+    std::shared_ptr<BinaryDataLogger> data_logger_;
+    std::atomic<uint32_t> pose_index_{0};
+    std::atomic<uint32_t> cloud_index_{0};
+    std::atomic<uint32_t> image_index_{0};
+
+    std::filesystem::path root_dir_;
 
     // Updated helper functions
     ImageConstPtr getLatestRgbImage() {

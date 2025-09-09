@@ -1,6 +1,7 @@
 
 # USAGE: ros2 launch odin_ros_driver odin1_ros2.launch.py
 import os
+import yaml 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -36,7 +37,19 @@ def generate_launch_description():
             'config_file': LaunchConfiguration('config_file')
         }]
     )
-    
+
+    pcd2depth_config_path = os.path.join(package_dir, 'config', 'control_command.yaml')
+    with open(pcd2depth_config_path, 'r') as f:
+        pcd2depth_params = yaml.safe_load(f) 
+    pcd2depth_calib_path = os.path.join(package_dir, 'config', 'calib.yaml')
+    pcd2depth_params['calib_file_path'] = pcd2depth_calib_path 
+    pcd2depth_node = Node(
+        package='odin_ros_driver',
+        executable='pcd2depth_ros2_node',  
+        name='pcd2depth_ros2_node',
+        output='screen',
+        parameters=[pcd2depth_params]
+    )
     # Create RViz2 node - loads specified configuration file
     rviz_node = Node(
         package='rviz2',
@@ -51,6 +64,7 @@ def generate_launch_description():
     ld.add_action(config_file_arg)
     ld.add_action(rviz_config_arg)  # Add RViz configuration argument
     ld.add_action(host_sdk_node)
+    ld.add_action(pcd2depth_node)
     ld.add_action(rviz_node)  # Add RViz node
     
     return ld

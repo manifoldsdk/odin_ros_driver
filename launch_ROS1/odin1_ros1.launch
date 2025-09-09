@@ -16,6 +16,11 @@
     <node name="$(arg node_name)" pkg="odin_ros_driver" type="host_sdk_sample" output="screen">
         <param name="config_file" value="$(arg config_file)"/>
     </node>
+
+    <node pkg="odin_ros_driver" type="pcd2depth_node" name="pcd2depth_node" output="screen" >
+        <rosparam command="load" file="$(find odin_ros_driver)/config/control_command.yaml"/>
+        <param name="calib_file_path" value="$(find odin_ros_driver)/config/calib.yaml"/>
+    </node>
     
     <!-- Launch RViz with configuration -->
     <node name="rviz" pkg="rviz" type="rviz" args="-d $(arg rviz_config)" output="screen"/>

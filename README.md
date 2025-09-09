@@ -16,7 +16,7 @@ This driver package provides core functionality for point cloud SLAM application
 
 ## 1. Version
 
-Current Version: v0.4.0
+Current Version: v0.4.1
 
 ## 2. Preparation
 
@@ -30,7 +30,7 @@ Current Version: v0.4.0
 
 ### 2.2 Dependencies
 
-● Opencv
+● Opencv >= 4.5.0(recommand 4.5.5/4.8.0)
 
 ● yaml-cpp
 
@@ -123,7 +123,7 @@ source /opt/ros/foxy/setup.bash
 
 ```shell
 source [ros_workspace]/install/setup.bash
-ros2 launch odin_ros_driver [launch file]
+roslaunch odin_ros_driver [launch file]
 ```
 ● odin_ros_driver: package name;
 
@@ -158,6 +158,11 @@ Odin_ROS_Driver/                // ROS1/ROS2 driver package
         host_sdk_sample.cpp     // Example source code
         yaml_parser.cpp         // Source code for reading yaml parameters
         rawCloudRender.cpp      // Source code for RenderCloud
+        depth_image_ros_node.cpp //depth_image_ros_node
+        depth_image_ros2_node.cpp //depth_image_ros2_node
+        pcd2depth_ros.cpp       //Source code for pcd2depth_ros
+        pcd2depth_ros2.cpp      //Source code for pcd2depth_ros2
+        pointcloud_depth_converter.cpp //Source code for pointcloud_depth_converter
     lib/
         liblydHostApi_amd.a     // Static library for AMD platform
         liblydHostApi_arm.a     // Static library for ARM platform
@@ -167,6 +172,10 @@ Odin_ROS_Driver/                // ROS1/ROS2 driver package
         lidar_api.h             // API function declarations
         yaml_parser.h           // Parameter file reading header file
         rawCloudRender.h        // API about RenderCloud
+        data_logger.h           // LOG about save_data
+        depth_image_ros_node.hpp // depth_image_ros_node
+        depth_image_ros2_node.hpp // depth_image_ros2_node
+        pointcloud_depth_converter.hpp // pointcloud_depth_convert
     config/
         control_command.yaml    // Control parameter file for driver
         calib.yaml              //Machine calibration yaml
@@ -200,6 +209,8 @@ Internal parameters of the Odin ROS driver are defined in config/control_command
 | odin1/cloud_render     | Render_Cloud Topic |
 | odin1/cloud_slam    | Slam_PointCloud Topic |
 | odin1/odometry      | Odom Topic |
+| odin1/depth_img_competetion      | Dense depth image Topic |
+| odin1/depth_img_competetion_cloud      | Dense Depth_Cloud Topic |
 
 ## 5. FAQ
 ### 5.1 Segmentation fault upon re-launching host SDK
