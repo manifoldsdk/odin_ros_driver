@@ -16,7 +16,7 @@ This driver package provides core functionality for point cloud SLAM application
 
 ## 1. Version
 
-Current Version: v0.4.1
+Current Version: v0.5.0
 
 ## 2. Preparation
 
@@ -30,7 +30,7 @@ Current Version: v0.4.1
 
 ### 2.2 Dependencies
 
-● Opencv >= 4.5.0(recommand 4.5.5/4.8.0)
+● Opencv >= 4.5.0(recommand 4.5.5/4.8.0. Make sure only one version of opencv is installed)
 
 ● yaml-cpp
 
@@ -122,7 +122,7 @@ source /opt/ros/foxy/setup.bash
 #### 3.4.1 ROS1 (Noetic for example):
 
 ```shell
-source [ros_workspace]/install/setup.bash
+source [ros_workspace]/devel/setup.bash
 roslaunch odin_ros_driver [launch file]
 ```
 ● odin_ros_driver: package name;
@@ -186,6 +186,8 @@ Odin_ROS_Driver/                // ROS1/ROS2 driver package
     script/
         build_ros1.sh           // Installation script for ROS1
         build_ros2.sh           // Installation script for ROS2
+    recorddata/                 // holds recorded data that can import into MindCloud
+    log/                        // holds log files
     README.md                   // Usage instructions
     CMakeLists.txt              // CMake build file
     License                     // License file
@@ -200,17 +202,67 @@ Odin_ROS_Driver/                // ROS1/ROS2 driver package
 ### 4.3 ROS topics
 Internal parameters of the Odin ROS driver are defined in config/control_command.yaml. Below are descriptions of the commonly used parameters:
 
-| Topic               | Detailed Description |
-|---------------------|----------------------|
-| odin1/imu           | Imu Topic |
-| odin1/image         | RGB Camera Topic |
-| odin1/image/compressed         | RGB Camera compressed Topic |
-| odin1/cloud_raw     | Raw_Cloud Topic |
-| odin1/cloud_render     | Render_Cloud Topic |
-| odin1/cloud_slam    | Slam_PointCloud Topic |
-| odin1/odometry      | Odom Topic |
-| odin1/depth_img_competetion      | Dense depth image Topic |
-| odin1/depth_img_competetion_cloud      | Dense Depth_Cloud Topic |
+| Topic               |control_command.yaml  | Detailed Description |
+|---------------------|----------------------|----------------------|
+| odin1/imu           | sendimu  | Imu Topic |
+| odin1/image         | sendrgb  | RGB Camera Topic, decoded from jpeg data from device |
+| odin1/image_undistort  | sendrgbundistort  | undistorted RGB Camera Topic, processed with calib.yaml from device |
+| odin1/image/compressed | sendrgbcompressed | RGB Camera compressed Topic, original jpeg data from device |
+| odin1/cloud_raw        | senddtof          | Raw_Cloud Topic |
+| odin1/cloud_render     | sendcloudrender  | Render_Cloud Topic, processed with raw point cloud, rgb image, and calib.yaml from device |
+| odin1/cloud_slam    | sendcloudslam    | Slam_PointCloud Topic |
+| odin1/odometry      | sendodom         | Odom Topic |
+| odin1/odometry_high | sendodom         | high frequency Odom Topic |
+| odin1/depth_img_competetion        | senddepth | Dense depth image Topic, demo, high computing power required |
+| odin1/depth_img_competetion_cloud  | senddepth | Dense Depth_Cloud Topic, demo, high computing power required |
+
+### 4.4 Data format
+
+1. The raw point cloud (cloud_raw) has the following fields:
+```
+float32 x             // X axis, in meters
+float32 y             // Y axis, in meters
+float32 z             // Z axis, in meters
+uint8  intensity      // Reflectivity, range 0–255
+uint16 confidence     // Point confidence, range 0–65535
+float32 offset_time   // Time offset relative to the base timestamp 
+```
+
+To work with this custom format in PCL, first define the point type:
+```cpp
+/*** LS ***/
+namespace ls_ros {
+    struct EIGEN_ALIGN16 Point {
+        float x;
+        float y;
+        float z;
+        uint8_t intensity;
+        uint16_t confidence;
+        float offset_time;
+        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    };
+}  // namespace ls_ros
+
+POINT_CLOUD_REGISTER_POINT_STRUCT(ls_ros::Point,
+      (float, x, x)
+      (float, y, y)
+      (float, z, z)
+      (uint8_t, intensity, intensity)
+      (uint16_t, confidence, confidence)
+      (float offset_time , offset_time)
+)
+```
+Then, you can easily convert a ROS sensor_msgs::PointCloud2 message into a PCL point cloud:
+```
+pcl::PointCloud<ls_ros::Point> ls_cloud;
+pcl::fromROSMsg(*msg, ls_cloud);
+```
+### 4.5 Other functionalities
+
+|control_command.yaml   | Detailed Description |
+|-----------------------|----------------------|
+| recorddata            | Record data in specific format that can be imported into MindCloud(TM) for post-processing. Please be aware that this will consume a lot of storage space. Testing shows 9.5G for 10mins of data. |
+| devstatuslog          | Device status logging, currently save device status (soc temperature, cpu usage, ram usage, dtof sensor temp .etc) and data tx & rx rate to devstatus.csv under log folder. A new file will be created every time the driver is started. |
 
 ## 5. FAQ
 ### 5.1 Segmentation fault upon re-launching host SDK
@@ -252,7 +304,20 @@ Unable to open X display or No protocol specified
 xhost + #This command enables graphical passthrough to Docker containers
 ``` 
 
-### 5.4 RVIZ has not responded for a long time
+### 5.4 ROS driver exit with get version failed error
+
+**Error Message**  
+```shell
+<ERROR><api.cpp:lidar_get_version:672>: get device version fail.
+get version failed.
+```
+
+**Resolution** 
+
+Device firmware version is too low, please update to latest version.
+
+
+### 5.5 RVIZ has not responded for a long time
 
 **Error Message**  
 Rviz does not respond, and after a while the terminal prints Device disconnected, waiting for reconnection...
@@ -261,7 +326,7 @@ Rviz does not respond, and after a while the terminal prints Device disconnected
 
 Please power on Odin module again
 
-### 5.5 Device not responding
+### 5.6 Device not responding
 
 **Error Message**  
 Missed ok response from device,probably wrong interaction procedure.
@@ -270,7 +335,7 @@ Missed ok response from device,probably wrong interaction procedure.
 
 Please adopt the solution mentioned in 5.1
 
-### 5.6 Device has no external calibration file 
+### 5.7 Device has no external calibration file 
 
 **Error Message**  
 ERROR：Missing camera node 'cam_0'
@@ -278,6 +343,30 @@ ERROR：Missing camera node 'cam_0'
 **Resolution** 
 
 Please plug and unplug the USB again
+
+### 5.8 ROS Driver report device disconnected immediately after stream started
+
+**Error Message**  
+
+```shell
+Device ready and streams activated
+Device detaching...
+Wating for device reconnection...
+Device disconnected, waiting for reconnection...
+```
+
+**Reason**
+
+Mostly common on ros2 environment and connected to complex network environment, such as office wifi & ethernet. ROS2 default to broadcast, and complex network environment will cause ros2 publish to block, leading to device disconnection.
+
+**Resolution** 
+
+If cross-device communication is not required, please restrict ros2 to localhost only with:
+```shell
+export ROS_LOCALHOST_ONLY=1
+```
+
+If cross-device communication is required, please simplify the network environment as much as possible. Mini local network with only required devices is recommended.
 
 ## 6.  Contact Information​​
 To help diagnose the issue, please provide the following details to our FAE engineer:

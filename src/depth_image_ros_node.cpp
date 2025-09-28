@@ -8,19 +8,22 @@ DepthImageRosNode::DepthImageRosNode(ros::NodeHandle &nh, ros::NodeHandle &pnh)
 
     depth_converter_ = std::make_unique<PointCloudToDepthConverter>(camera_params);
     pnh_.param<std::string>("cloud_raw_topic", cloud_raw_topic_, std::string("/odin1/cloud_raw"));
+    pnh_.param<std::string>("color_raw_topic", color_raw_topic_, std::string("/odin1/image"));
     pnh_.param<std::string>("color_compressed_topic_", color_compressed_topic_, std::string("/odin1/image/compressed"));
     pnh_.param<std::string>("depth_image_topic", depth_image_topic_, std::string("/odin1/depth_img_competetion"));
     pnh_.param<std::string>("depth_cloud_topic", depth_cloud_topic_, std::string("/odin1/depth_img_competetion_cloud"));
 
     ROS_INFO_STREAM("\n  cloud_raw_topic: " << cloud_raw_topic_
-                                            << "\n  color_compressed_topic: " << color_compressed_topic_
-                                            << "\n  depth_image_topic: " << depth_image_topic_
-                                            << "\n  depth_cloud_topic: " << depth_cloud_topic_);
+                << "\n  color_raw_topic: " << color_raw_topic_
+                << "\n  color_compressed_topic: " << color_compressed_topic_
+                << "\n  depth_image_topic: " << depth_image_topic_
+                << "\n  depth_cloud_topic: " << depth_cloud_topic_);
 
     cloud_sub_.subscribe(nh_, cloud_raw_topic_, 1);
+    color_sub_.subscribe(nh_, color_raw_topic_, 1);
     color_compressed_sub_.subscribe(nh_, color_compressed_topic_, 1);
 
-    sync_ = std::make_shared<Sync>(MySyncPolicy(10), cloud_sub_, color_compressed_sub_);
+    sync_ = std::make_shared<Sync>(MySyncPolicy(10), cloud_sub_, color_sub_);
     sync_->registerCallback(boost::bind(&DepthImageRosNode::syncCallback, this, _1, _2));
 
     depth_image_pub_ = it_.advertise(depth_image_topic_, 1);
@@ -88,7 +91,7 @@ PointCloudToDepthConverter::CameraParams DepthImageRosNode::loadCameraParams()
 }
 
 void DepthImageRosNode::syncCallback(const sensor_msgs::PointCloud2ConstPtr &cloud_msg,
-                                     const sensor_msgs::CompressedImageConstPtr &image_msg)
+                                     const sensor_msgs::ImageConstPtr &image_msg)
 {
     pcl::PointCloud<pcl::PointXYZ> cloud;
     pcl::fromROSMsg(*cloud_msg, cloud);
@@ -101,7 +104,9 @@ void DepthImageRosNode::syncCallback(const sensor_msgs::PointCloud2ConstPtr &clo
     cv::Mat img_raw;
     try
     {
-        img_raw = cv::imdecode(cv::Mat(image_msg->data), cv::IMREAD_COLOR);
+        // img_raw = cv::imdecode(cv::Mat(image_msg->data), cv::IMREAD_COLOR);
+        cv_bridge::CvImageConstPtr cv_ptr = cv_bridge::toCvShare(image_msg, "bgr8");
+        img_raw = cv_ptr->image;
         if (img_raw.empty())
         {
             ROS_WARN("Failed to decode compressed image");

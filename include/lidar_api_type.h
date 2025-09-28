@@ -53,6 +53,8 @@ typedef enum {
     LIDAR_DT_RAW_DTOF           = 1 << 3,
     LIDAR_DT_SLAM_CLOUD         = 1 << 4,
     LIDAR_DT_SLAM_ODOMETRY      = 1 << 5,
+    LIDAR_DT_DEV_STATUS         = 1 << 6,
+    LIDAR_DT_SLAM_ODOMETRY_HIGHFREQ = 1 << 7,
 } lidar_data_type_e;
 
 typedef struct {
@@ -90,19 +92,16 @@ typedef struct {
     int64_t cov[3 * 3 * 2];
 } ros_odom_convert_complete_t;
 
-typedef struct icm_6aixs_data_t {
-	int16_t aacx;
-	int16_t aacy; 
-	int16_t aacz;
-	int16_t gyrox;
-	int16_t gyroy;
-	int16_t gyroz;
-	uint8_t valid;
-	uint32_t nums;
-	uint8_t fsync_pack;
-	uint16_t interval;
-	uint64_t stamp;
-} icm_6aixs_data_t;
+typedef struct {
+    float accel_x;
+    float accel_y;
+    float accel_z;
+    float gyro_x;
+    float gyro_y;
+    float gyro_z;
+    uint64_t stamp;
+    uint64_t sequence;
+} imu_convert_data_t;
 
  typedef struct {
     uint32_t length;
@@ -139,6 +138,68 @@ typedef struct {
     char dev_app_version[64];
     char host_app_version[64];
 } lidar_version_t;
+
+/**
+ * @brief RGB image sensor frame rate
+ * 
+ */
+ typedef struct{
+
+    int configured_odr; /* rgb image sensor configured output data rate */
+    int tx_odr;         /* rgb image sensor tx output data rate */
+
+} lidar_rgb_sensor_status_t;
+
+/**
+ * @brief DTOF Lidar frame rate
+ * 
+ */
+typedef struct{
+
+    int configured_odr; /* dtof lidar sensor configured output data rate */
+    int tx_odr;         /* dtof lidar sensor tx output data rate */
+    int subframe_odr;   /* dtof lidar sensor subframe output data rate */
+    short tx_temp;      /* dtof lidar tx module temp */
+    short rx_temp;      /* dtof lidar rx module temp */
+
+} lidar_dtof_sensor_status_t;
+
+/**
+ * @brief IMU Sensor
+ * 
+ */
+typedef struct{
+
+    int configured_odr; /* imu sensor configured output data rate */
+    int tx_odr;         /* imu sensor tx output data rate */
+
+} lidar_imu_sensor_status_t;
+
+typedef struct{
+
+    int package_temp;   /* soc package temp */
+    int cpu_temp;       /* cpu temp */
+    int center_temp;    /* center temp */
+    int gpu_temp;       /* gpu temp */
+    int npu_temp;       /* npu temp */
+
+} lidar_soc_thermal_t;
+typedef struct
+{
+    lidar_soc_thermal_t soc_thermal; 
+
+    int cpu_use_rate[8];              /* cpu usage rate */
+    int ram_use_rate;                 /* ram usage rate */
+
+    lidar_rgb_sensor_status_t rgb_sensor;
+    lidar_dtof_sensor_status_t dtof_sensor;
+    lidar_imu_sensor_status_t imu_sensor;
+
+    int slam_cloud_tx_odr;          /* slam cloud tx output data rate */
+    int slam_odom_tx_odr;           /* slam odom tx output data rate */
+    int slam_odom_highfreq_tx_odr;  /* slam odom high freq tx output data rate */
+
+} lidar_device_status_t;
 
 #ifdef __cplusplus
 }

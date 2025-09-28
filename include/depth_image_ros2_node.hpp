@@ -47,15 +47,18 @@ public:
 private:
     std::string cloud_raw_topic_;
     std::string color_compressed_topic_;
+    std::string color_raw_topic_;
     std::string depth_image_topic_;
     std::string depth_cloud_topic_;
 
     message_filters::Subscriber<sensor_msgs::msg::PointCloud2> cloud_sub_;
     message_filters::Subscriber<sensor_msgs::msg::CompressedImage> color_compressed_sub_;
+    message_filters::Subscriber<sensor_msgs::msg::Image> color_sub_;
 
     typedef message_filters::sync_policies::ApproximateTime<
         sensor_msgs::msg::PointCloud2, 
-        sensor_msgs::msg::CompressedImage> MySyncPolicy;
+        // sensor_msgs::msg::CompressedImage,
+        sensor_msgs::msg::Image> MySyncPolicy;
     typedef message_filters::Synchronizer<MySyncPolicy> Sync;
     std::shared_ptr<Sync> sync_;
 
@@ -69,7 +72,8 @@ private:
     PointCloudToDepthConverter::CameraParams loadCameraParams();
 
     void syncCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud_msg,
-                      const sensor_msgs::msg::CompressedImage::ConstSharedPtr image_msg);
+                      // const sensor_msgs::msg::CompressedImage::ConstSharedPtr image_msg,
+                      const sensor_msgs::msg::Image::ConstSharedPtr color_msg);
 
 
     void publishDepthImage(const cv::Mat &img,

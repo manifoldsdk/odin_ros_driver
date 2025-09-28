@@ -1,12 +1,14 @@
 register_keys:
-  streamctrl: 1
-  sendrgb: 1
-  sendimu: 1
-  sendodom: 1
-  senddtof: 1
-  sendcloudslam: 1
-  sendcloudrender: 1
-  sendrgbcompressed: 1
-  senddepth: 0
-  recorddata: 0
+  streamctrl: 1         # 0: off; 1: on
+  sendrgb: 1            # 0: off; 1: on
+  sendimu: 1            # 0: off; 1: on
+  sendodom: 1           # 0: off; 1: on
+  senddtof: 1           # 0: off; 1: on
+  sendcloudslam: 1      # 0: off; 1: on
+  sendcloudrender: 1    # 0: off; 1: on
+  sendrgbcompressed: 1  # 0: off; 1: on
+  senddepth: 0          # 0: off; 1: on
+  sendrgbundistort: 0   # 0: off; 1: on
+  recorddata: 0         # 0: off; 1: on
+  devstatuslog: 1       # 0: off; 1: on
 

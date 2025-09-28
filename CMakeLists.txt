@@ -96,6 +96,9 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Set optimization flags
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2")
+
 # Find common dependencies
 find_package(PkgConfig REQUIRED)
 find_package(OpenCV REQUIRED)

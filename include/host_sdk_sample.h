@@ -43,6 +43,15 @@ limitations under the License.
 #include <sys/types.h>
 #include <sys/wait.h>
 
+#include <yaml-cpp/yaml.h>
+#include "polynomial_camera.hpp"
+
+struct CameraParams {
+    int width, height;
+    double fx, fy, cx, cy, skew;
+    double k2, k3, k4, k5, k6, k7;
+    double p1, p2;
+};
 
 #define LOG_LEVEL_NONE 0
 #define LOG_LEVEL_ERROR 1
@@ -128,21 +137,9 @@ extern int g_sendcloudrender;
 #endif
 
 // Common definitions
-#define GD_ACCL_G 9.7833f
-#define ACC_1G_ms2 9.8
-#define ACC_SEN_SCALE 4096
 #define PAI 3.14159265358979323846
-#define GYRO_SEN_SCALE 16.4f
 #define DTOF_NUM_ROW_PER_GROUP 6
 // Common functions
-inline float accel_convert(int16_t raw, int sen_scale) {
-    return (raw * GD_ACCL_G / sen_scale);
-}
-
-inline float gyro_convert(int16_t raw, float sen_scale) {
-    return (raw * PAI) / (sen_scale * 180); 
-}
-
 inline ros::Time ns_to_ros_time(uint64_t timestamp_ns) {
     ros::Time t;
     #ifdef ROS2
@@ -211,7 +208,7 @@ public:
     }
  
     rawCloudRender render_;
-    void publishImu(icm_6aixs_data_t *stream) {
+    void publishImu(imu_convert_data_t *stream) {
         #ifdef ROS2
             sensor_msgs::msg::Imu imu_msg;
         #else
@@ -220,15 +217,15 @@ public:
         
         imu_msg.header.stamp = ns_to_ros_time(stream->stamp);
         imu_msg.header.frame_id = "imu_link";
-        
-        imu_msg.linear_acceleration.y = -1 * static_cast<double>(accel_convert(stream->aacx, ACC_SEN_SCALE));
-        imu_msg.linear_acceleration.x = static_cast<double>(accel_convert(stream->aacy, ACC_SEN_SCALE));
-        imu_msg.linear_acceleration.z = static_cast<double>(accel_convert(stream->aacz, ACC_SEN_SCALE));
-        
-        imu_msg.angular_velocity.y = -1 * static_cast<double>(gyro_convert(stream->gyrox, GYRO_SEN_SCALE));
-        imu_msg.angular_velocity.x = static_cast<double>(gyro_convert(stream->gyroy, GYRO_SEN_SCALE));
-        imu_msg.angular_velocity.z = static_cast<double>(gyro_convert(stream->gyroz, GYRO_SEN_SCALE));
-        
+
+        imu_msg.linear_acceleration.y = -1 * stream->accel_x;
+        imu_msg.linear_acceleration.x = stream->accel_y;
+        imu_msg.linear_acceleration.z = stream->accel_z;
+
+        imu_msg.angular_velocity.y = -1 * stream->gyro_x;
+        imu_msg.angular_velocity.x = stream->gyro_y;
+        imu_msg.angular_velocity.z = stream->gyro_z;
+
         imu_msg.orientation.x = 0.0;
         imu_msg.orientation.y = 0.0;
         imu_msg.orientation.z = 0.0;
@@ -552,8 +549,7 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
 	//std::cout << stream->imageCount << std::endl;
     float dtof_subframe_odr = getRosNodeControl()->getDtofSubframeODR() / 1000.0f;
     // printf("dtof_subframe_odr: %f\n", dtof_subframe_odr);
-	    
-    int valid_points = 0;
+
     if (stream->imageCount == 4) {
 
         uint8_t* intensity_data = static_cast<uint8_t*>(stream->imageList[2].pAddr);
@@ -561,25 +557,29 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
     
         for (int i = 0; i < total_points; ++i) {
             if (confidence_data[i] < 35) {
-                continue;
-            }
-            // XYZ point
-            *iter_x = xyz_data_f[i * 3 + 2] / 1000.0f; ++iter_x;
-            *iter_y = -xyz_data_f[i * 3 + 0] / 1000.0f; ++iter_y;
-            *iter_z = xyz_data_f[i * 3 + 1] / 1000.0f; ++iter_z;
-            
-            *iter_intensity = intensity_data[i]; ++iter_intensity;
-            *iter_confidence = confidence_data[i]; ++iter_confidence;
-            
-            if (dtof_subframe_odr > 0.0) {
-                int group = i / DTOF_NUM_ROW_PER_GROUP;
-                float timestamp_offset = group * 1.0 / dtof_subframe_odr;
+                *iter_x = 0.0f; ++iter_x;
+                *iter_y = 0.0f; ++iter_y;
+                *iter_z = 0.0f; ++iter_z;
+                *iter_intensity = 0; ++iter_intensity;
+                *iter_confidence = 0; ++iter_confidence;
+                *iter_offsettime = 0.0f; ++iter_offsettime;
+            } else {
+                // XYZ point
+                *iter_x = xyz_data_f[i * 3 + 2] / 1000.0f; ++iter_x;
+                *iter_y = -xyz_data_f[i * 3 + 0] / 1000.0f; ++iter_y;
+                *iter_z = xyz_data_f[i * 3 + 1] / 1000.0f; ++iter_z;
+                
+                *iter_intensity = intensity_data[i]; ++iter_intensity;
+                *iter_confidence = confidence_data[i]; ++iter_confidence;
+                
+                if (dtof_subframe_odr > 0.0) {
+                    int group = i / DTOF_NUM_ROW_PER_GROUP;
+                    float timestamp_offset = group * 1.0 / dtof_subframe_odr;
 
-                *iter_offsettime = timestamp_offset;
-                ++iter_offsettime;
+                    *iter_offsettime = timestamp_offset;
+                    ++iter_offsettime;
+                }
             }
-
-            valid_points++;
     	}
     } else {
         uint16_t* intensity_data = static_cast<uint16_t*>(stream->imageList[2].pAddr);
@@ -601,8 +601,6 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
             
             *iter_confidence = 0;
             ++iter_confidence;
-            
-            valid_points++;
         }
     }
 
@@ -657,9 +655,9 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
             //Create ROS image message
             #ifdef ROS2
                 auto header = std::make_shared<std_msgs::msg::Header>();
-                header->stamp = ns_to_ros_time(image.timestamp + 719060); // Offset compensation
+                header->stamp = ns_to_ros_time(image.timestamp); // Offset compensation
 
-                //RCLCPP_INFO(rclcpp::get_logger("device_cb"), "image rgb %ld",image.timestamp + 719060);
+                //RCLCPP_INFO(rclcpp::get_logger("device_cb"), "image rgb %ld",image.timestamp);
                 header->frame_id = "camera_rgb_frame";
                 
                 auto cv_image = std::make_shared<cv_bridge::CvImage>(*header, "bgr8", bgr);
@@ -693,7 +691,7 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
                 // Enqueue binary logging for image
                 if (data_logger_) {
                     const uint32_t idx_now = image_index_.fetch_add(1, std::memory_order_relaxed);
-                    const double ts_sec = static_cast<double>(image.timestamp + 719060) / 1e9;
+                    const double ts_sec = static_cast<double>(image.timestamp) / 1e9;
                     const uint32_t jpeg_size = static_cast<uint32_t>(compressed_msg->data.size());
                     std::vector<uint8_t> blob;
                     blob.reserve(sizeof(uint32_t) + sizeof(double) + sizeof(uint32_t) + jpeg_size);
@@ -713,7 +711,7 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
             #else
                 // ROS1 version
                 std_msgs::Header header;
-                header.stamp = ns_to_ros_time(image.timestamp + 719060); // Offset compensation
+                header.stamp = ns_to_ros_time(image.timestamp); // Offset compensation
                 header.frame_id = "camera_rgb_frame";
                 
                 auto cv_image = boost::make_shared<cv_bridge::CvImage>(header, "bgr8", bgr);
@@ -785,7 +783,7 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
         cv::Mat decoded_image = cv::imdecode(jpeg_data, cv::IMREAD_COLOR);
 
         cv_bridge::CvImage cv_image;
-        cv_image.header.stamp = ns_to_ros_time(stream->imageList[0].timestamp + 719060);
+        cv_image.header.stamp = ns_to_ros_time(stream->imageList[0].timestamp);
         cv_image.encoding = "bgr8";
         cv_image.image = decoded_image;
 
@@ -800,7 +798,7 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
         // Enqueue binary logging for image
         if (data_logger_) {
             const uint32_t idx_now = image_index_.fetch_add(1, std::memory_order_relaxed);
-            const double ts_sec = static_cast<double>(stream->imageList[0].timestamp + 719060) / 1e9;
+            const double ts_sec = static_cast<double>(stream->imageList[0].timestamp) / 1e9;
             const uint32_t jpeg_size = static_cast<uint32_t>(jpeg_data.size());
             std::vector<uint8_t> blob;
             blob.reserve(sizeof(uint32_t) + sizeof(double) + sizeof(uint32_t) + jpeg_size);
@@ -815,13 +813,26 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
             data_logger_->enqueueImageFrame(std::move(blob));
         }
 
+        // undistort image
+        cv::Mat undistorted_image = cv::Mat::zeros(decoded_image.size(), decoded_image.type());
+        cv_bridge::CvImage cv_undistorted_image;
+
+        if (m_undistort_map_init_success) {
+            cv::remap(decoded_image, undistorted_image, m_undistort_map_x, m_undistort_map_y, cv::INTER_LINEAR);
+            cv_undistorted_image.header.stamp = ns_to_ros_time(stream->imageList[0].timestamp);
+            cv_undistorted_image.encoding = "bgr8";
+            cv_undistorted_image.image = undistorted_image;
+        }
         #ifdef ROS2
         {
             rgb_pub_->publish(*cv_image.toImageMsg());
+            if (m_undistort_map_init_success) {
+                undistort_rgb_pub_->publish(*cv_undistorted_image.toImageMsg());
+            }
 
             // original jpeg
             sensor_msgs::msg::CompressedImage jpeg_msg;
-            jpeg_msg.header.stamp = ns_to_ros_time(stream->imageList[0].timestamp + 719060);
+            jpeg_msg.header.stamp = ns_to_ros_time(stream->imageList[0].timestamp);
             jpeg_msg.format = "jpeg";
             jpeg_msg.data = jpeg_data;
 
@@ -830,12 +841,15 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
         #else
         {
             rgb_pub_.publish(cv_image.toImageMsg());
+            if (m_undistort_map_init_success) {
+                undistort_rgb_pub_.publish(cv_undistorted_image.toImageMsg());
+            }
 
             // original jpeg
             sensor_msgs::CompressedImagePtr jpeg_msg(new sensor_msgs::CompressedImage());
             // compressed_msg->header = header;
             // compressed_msg->format = "jpeg";
-            jpeg_msg->header.stamp = ns_to_ros_time(stream->imageList[0].timestamp + 719060);
+            jpeg_msg->header.stamp = ns_to_ros_time(stream->imageList[0].timestamp);
             jpeg_msg->format = "jpeg";
             jpeg_msg->data = jpeg_data;
 
@@ -977,7 +991,7 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
 #endif
     }
 
-    void publishOdometry(capture_Image_List_t* stream) {
+    void publishOdometry(capture_Image_List_t* stream, bool is_highfreq) {
         
 #ifdef ROS2
             auto msg = nav_msgs::msg::Odometry();
@@ -1062,9 +1076,17 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
             }
 
 #ifdef ROS2
-            odom_publisher_->publish(std::move(msg));
+            if (is_highfreq) {
+                odom_highfreq_publisher_->publish(std::move(msg));
+            } else {
+                odom_publisher_->publish(std::move(msg));
+            }
 #else
-            odom_publisher_.publish(msg);
+            if (is_highfreq) {
+                odom_highfreq_publisher_.publish(msg);
+            } else {
+                odom_publisher_.publish(msg);
+            }
 #endif
     }
 
@@ -1086,6 +1108,81 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
             #endif
             data_logger_.reset();
         }
+    }
+
+    int loadCameraParams(const std::string& yaml_file) {
+        try {
+            YAML::Node config = YAML::LoadFile(yaml_file);
+    
+            YAML::Node cam_node = config["cam_0"];
+    
+            m_camera_params.width = cam_node["image_width"].as<int>();
+            m_camera_params.height = cam_node["image_height"].as<int>();
+    
+            double A11 = cam_node["A11"].as<double>();
+            double A12 = cam_node["A12"].as<double>();
+            double A22 = cam_node["A22"].as<double>();
+            double u0 = cam_node["u0"].as<double>();
+            double v0 = cam_node["v0"].as<double>();
+    
+            m_camera_params.fx = A11;
+            m_camera_params.fy = A22;
+            m_camera_params.cx = u0;
+            m_camera_params.cy = v0;
+            m_camera_params.skew = A12;
+    
+            m_camera_params.k2 = cam_node["k2"].as<double>();
+            m_camera_params.k3 = cam_node["k3"].as<double>();
+            m_camera_params.k4 = cam_node["k4"].as<double>();
+            m_camera_params.k5 = cam_node["k5"].as<double>();
+            m_camera_params.k6 = cam_node["k6"].as<double>();
+            m_camera_params.k7 = cam_node["k7"].as<double>();
+            m_camera_params.p1 = cam_node["p1"].as<double>();
+            m_camera_params.p2 = cam_node["p2"].as<double>();
+#if 0 
+            std::cout << "成功读取相机参数:" << std::endl;
+            std::cout << "图像尺寸: " << m_camera_params.width << "x" << m_camera_params.height << std::endl;
+            std::cout << "焦距: fx=" << m_camera_params.fx << ", fy=" << m_camera_params.fy << std::endl;
+            std::cout << "主点: cx=" << m_camera_params.cx << ", cy=" << m_camera_params.cy << std::endl;
+            std::cout << "倾斜: " << m_camera_params.skew << std::endl;
+            std::cout << "畸变系数: k2=" << m_camera_params.k2 << ", k3=" << m_camera_params.k3 
+                      << ", k4=" << m_camera_params.k4 << ", k5=" << m_camera_params.k5 
+                      << ", k6=" << m_camera_params.k6 << ", k7=" << m_camera_params.k7 << std::endl;
+#endif            
+            m_cam = std::make_unique<mini_vikit::PolynomialCamera>(m_camera_params.width, m_camera_params.height,
+                m_camera_params.fx, m_camera_params.fy, m_camera_params.cx, m_camera_params.cy, m_camera_params.skew,
+                m_camera_params.k2, m_camera_params.k3, m_camera_params.k4, m_camera_params.k5, m_camera_params.k6, m_camera_params.k7);
+
+            m_cam_init_success = true;
+            return 0;
+        } catch (const std::exception& e) {
+            std::cerr << "读取YAML文件失败: " << e.what() << std::endl;
+            m_cam_init_success = false;
+            return -1;
+        }
+    }
+
+    void buildUndistortMap()
+    {
+        m_undistort_map_x.create(m_camera_params.height, m_camera_params.width, CV_32F);
+        m_undistort_map_y.create(m_camera_params.height, m_camera_params.width, CV_32F);
+
+        for (int v_out = 0; v_out < m_camera_params.height; ++v_out) {
+            for (int u_out = 0; u_out < m_camera_params.width; ++u_out) {
+                double x_norm = (u_out - m_cam->cx()) / m_cam->fx();
+                double y_norm = (v_out - m_cam->cy()) / m_cam->fy();
+
+                // remove skew
+                x_norm = x_norm - y_norm * m_cam->skew() / m_cam->fx();
+
+                Eigen::Vector2d uv(x_norm, y_norm);
+                Eigen::Vector2d distorted_pixel = m_cam->world2cam(uv);
+
+                m_undistort_map_x.at<float>(v_out, u_out) = static_cast<float>(distorted_pixel[0]);
+                m_undistort_map_y.at<float>(v_out, u_out) = static_cast<float>(distorted_pixel[1]);
+            }
+        }
+        m_undistort_map_init_success = true;
     }
 
 private:
@@ -1132,7 +1229,12 @@ private:
         return images;
     }
 
-
+    CameraParams m_camera_params;
+    std::unique_ptr<mini_vikit::PolynomialCamera> m_cam;
+    bool m_cam_init_success;
+    bool m_undistort_map_init_success = false;
+    cv::Mat m_undistort_map_x;
+    cv::Mat m_undistort_map_y;
 #ifdef ROS2
     std::vector<sensor_msgs::msg::PointCloud2> getIntensityCloudQueueSnapshot() {
         std::lock_guard<std::mutex> lock(pcd_queue_mutex_);
@@ -1164,8 +1266,10 @@ private:
             cloud_pub_ = node_->create_publisher<ros::PointCloud2>("odin1/cloud_raw", 10);
             xyzrgbacloud_pub_ = node_->create_publisher<ros::PointCloud2>("odin1/cloud_slam", 10);
             odom_publisher_ = node_->create_publisher<ros::Odometry>("odin1/odometry", 10);
+            odom_highfreq_publisher_ = node_->create_publisher<ros::Odometry>("odin1/odometry_highfreq", 10);
             rgbcloud_pub_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("odin1/cloud_render", 10);
 	    compressed_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::CompressedImage>("odin1/image/compressed", 10);
+        undistort_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::Image>("odin1/image/undistorted", 10);
         #endif
     }
     #ifdef ROS1
@@ -1175,8 +1279,10 @@ private:
             cloud_pub_ = nh.advertise<ros::PointCloud2>("odin1/cloud_raw", 10);
             xyzrgbacloud_pub_ = nh.advertise<ros::PointCloud2>("odin1/cloud_slam", 10);
             odom_publisher_ = nh.advertise<ros::Odometry>("odin1/odometry", 10);
+            odom_highfreq_publisher_ = nh.advertise<ros::Odometry>("odin1/odometry_highfreq", 10);
             rgbcloud_pub_ = nh.advertise<sensor_msgs::PointCloud2>("odin1/cloud_render", 10);
             compressed_rgb_pub_ = nh.advertise<sensor_msgs::CompressedImage>("odin1/image/compressed", 10);
+            undistort_rgb_pub_ = nh.advertise<sensor_msgs::Image>("odin1/image/undistorted", 10);
         }
     #endif
 
@@ -1187,20 +1293,24 @@ private:
         rclcpp::Publisher<ros::PointCloud2>::SharedPtr cloud_pub_;
         rclcpp::Publisher<ros::PointCloud2>::SharedPtr xyzrgbacloud_pub_;
         rclcpp::Publisher<ros::Odometry>::SharedPtr odom_publisher_;
+        rclcpp::Publisher<ros::Odometry>::SharedPtr odom_highfreq_publisher_;
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr rendered_cloud_pub_;
         rclcpp::Publisher<PointCloud2Msg>::SharedPtr rgbcloud_pub_;
         rclcpp::Publisher<ImageMsg>::SharedPtr rgbFromnv12_pub_;
         rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_rgb_pub_; // New compressed image publisher
+        rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr undistort_rgb_pub_;
     #else
         ros::Publisher imu_pub_;
         ros::Publisher rgb_pub_;
         ros::Publisher cloud_pub_;
         ros::Publisher xyzrgbacloud_pub_;
         ros::Publisher odom_publisher_;
+        ros::Publisher odom_highfreq_publisher_;
         ros::Publisher rendered_cloud_pub_;
         ros::Publisher rgbcloud_pub_;
         ros::Publisher rgbFromnv12_pub_;
         ros::Publisher compressed_rgb_pub_; // New compressed image publisher
+        ros::Publisher undistort_rgb_pub_;
     #endif
 };
 
