@@ -1020,7 +1020,7 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
                 msg.pose.pose.orientation.w = static_cast<double>(odom_data->orient[3]) / 1e6;
 
                 // Enqueue binary logging for pose
-                if (data_logger_) {
+                if (!is_highfreq && data_logger_) {
                     const uint32_t idx_now = pose_index_.fetch_add(1, std::memory_order_relaxed);
                     const double ts_sec = static_cast<double>(odom_data->timestamp_ns) / 1e9;
                     float pose_arr[7];
