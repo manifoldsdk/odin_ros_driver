@@ -1,3 +1,16 @@
+/*
+Copyright 2025 Manifold Tech Ltd.(www.manifoldtech.com.co)
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+   http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 #include "pointcloud_depth_converter.hpp"
 #include <cmath>
 #include <iostream>
@@ -23,7 +36,7 @@ void PointCloudToDepthConverter::initializeInternalParams()
 
     Kl_ = Eigen::Matrix3d::Identity();
     Kl_(0, 0) = params_.A11 / params_.scale;
-    Kl_(0, 1) = params_.A12 / params_.scale;
+    Kl_(0, 1) = 0.0;
     Kl_(0, 2) = params_.u0 / params_.scale;
     Kl_(1, 1) = params_.A22 / params_.scale;
     Kl_(1, 2) = params_.v0 / params_.scale;
@@ -241,16 +254,7 @@ cv::Mat PointCloudToDepthConverter::postProcessDepthImage(const cv::Mat &depth_i
         return cv::Mat();
     }
 
-    cv::Mat depth_img_distorted;
-    try {
-        depth_undistorted_ = depth_img_upsampled.clone();
-        cv::remap(depth_img_upsampled, depth_img_distorted, map_x_, map_y_, cv::INTER_LINEAR);
-    } catch (const cv::Exception& e) {
-        std::cerr << "ERROR: Remap failed: " << e.what() << std::endl;
-        return cv::Mat();
-    }
-    
-    return depth_img_distorted;
+    return depth_img_upsampled;
 }
 
 cv::Mat PointCloudToDepthConverter::customResize(const cv::Mat& src, const cv::Size& size) {
@@ -291,9 +295,8 @@ pcl::PointCloud<pcl::PointXYZRGB> PointCloudToDepthConverter::generateColoredClo
     const cv::Mat &depth_img, const cv::Mat &color_img)
 {
     cv::Mat depth_undistorted, color_undistorted;
-    depth_undistorted = depth_undistorted_.clone();
+    depth_undistorted = depth_img.clone();
     cv::remap(color_img, color_undistorted, inv_map_x_, inv_map_y_, cv::INTER_LINEAR);
-    
 
     pcl::PointCloud<pcl::PointXYZRGB> cloud_colored;
 

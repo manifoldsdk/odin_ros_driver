@@ -16,7 +16,7 @@ This driver package provides core functionality for point cloud SLAM application
 
 ## 1. Version
 
-Current Version: v0.5.1
+Current Version: v0.5.2
 
 ## 2. Preparation
 
@@ -178,7 +178,7 @@ Odin_ROS_Driver/                // ROS1/ROS2 driver package
         pointcloud_depth_converter.hpp // pointcloud_depth_convert
     config/
         control_command.yaml    // Control parameter file for driver
-        calib.yaml              //Machine calibration yaml
+        calib.yaml              // Machine calibration yaml，differ for each individual device. Retrieved from the device everytime it connects to ROS driver
     launch_ROS1/
         odin1_ros1.launch       // ROS1 launch file
     launch_ROS2/
@@ -188,6 +188,9 @@ Odin_ROS_Driver/                // ROS1/ROS2 driver package
         build_ros2.sh           // Installation script for ROS2
     recorddata/                 // holds recorded data that can import into MindCloud
     log/                        // holds log files
+        Driver_{timestamp}/     // holds all log folders for each time driver started
+            Conn_{timestamp}/   // holds all log files for each odin1 device connection
+                dev_status.csv  // device status log file
     README.md                   // Usage instructions
     CMakeLists.txt              // CMake build file
     License                     // License file
@@ -204,17 +207,17 @@ Internal parameters of the Odin ROS driver are defined in config/control_command
 
 | Topic               |control_command.yaml  | Detailed Description |
 |---------------------|----------------------|----------------------|
-| odin1/imu           | sendimu  | Imu Topic |
-| odin1/image         | sendrgb  | RGB Camera Topic, decoded from jpeg data from device |
-| odin1/image_undistort  | sendrgbundistort  | undistorted RGB Camera Topic, processed with calib.yaml from device |
-| odin1/image/compressed | sendrgbcompressed | RGB Camera compressed Topic, original jpeg data from device |
-| odin1/cloud_raw        | senddtof          | Raw_Cloud Topic |
-| odin1/cloud_render     | sendcloudrender  | Render_Cloud Topic, processed with raw point cloud, rgb image, and calib.yaml from device |
-| odin1/cloud_slam    | sendcloudslam    | Slam_PointCloud Topic |
-| odin1/odometry      | sendodom         | Odom Topic |
-| odin1/odometry_high | sendodom         | high frequency Odom Topic |
-| odin1/depth_img_competetion        | senddepth | Dense depth image Topic, demo, high computing power required |
-| odin1/depth_img_competetion_cloud  | senddepth | Dense Depth_Cloud Topic, demo, high computing power required |
+| odin1/imu                     | sendimu           | Imu Topic |
+| odin1/image                   | sendrgb           | RGB Camera Topic, decoded from original jpeg data from device, bgr8 format |
+| odin1/image_undistort         | sendrgbundistort  | undistorted RGB Camera Topic, processed with calib.yaml from device |
+| odin1/image/compressed        | sendrgbcompressed | RGB Camera compressed Topic, original jpeg data from device |
+| odin1/cloud_raw               | senddtof          | Raw_Cloud Topic |
+| odin1/cloud_render            | sendcloudrender   | Render_Cloud Topic, processed with raw point cloud, rgb image, and calib.yaml from device |
+| odin1/cloud_slam              | sendcloudslam     | Slam_PointCloud Topic |
+| odin1/odometry                | sendodom          | Odom Topic |
+| odin1/odometry_high           | sendodom          | high frequency Odom Topic |
+| odin1/depth_img_competetion   | senddepth         | Dense depth image Topic. Demo, high computing power required. One-to-one with odin1/image_undistort. To utilize the data please directly subscribe to this topic instead of echoing it. Original value is already depth data, no need for further convert. |
+| odin1/depth_img_competetion_cloud  | senddepth         | Dense Depth_Cloud Topic. Demo, high computing power required |
 
 ### 4.4 Data format
 
@@ -225,7 +228,7 @@ float32 y             // Y axis, in meters
 float32 z             // Z axis, in meters
 uint8  intensity      // Reflectivity, range 0–255
 uint16 confidence     // Point confidence, range 0–65535
-float32 offset_time   // Time offset relative to the base timestamp 
+float32 offset_time   // Time offset relative to the base timestamp unit: s 
 ```
 
 To work with this custom format in PCL, first define the point type:
@@ -257,6 +260,15 @@ Then, you can easily convert a ROS sensor_msgs::PointCloud2 message into a PCL p
 pcl::PointCloud<ls_ros::Point> ls_cloud;
 pcl::fromROSMsg(*msg, ls_cloud);
 ```
+
+2. The slam point cloud (cloud_slam) and directly rendered point cloud (cloud_render) has the following fields:
+```
+float32 x             // X axis, in meters
+float32 y             // Y axis, in meters
+float32 z             // Z axis, in meters
+float32 rgb           // RGB value
+```
+
 ### 4.5 Other functionalities
 
 |control_command.yaml   | Detailed Description |
@@ -367,6 +379,23 @@ export ROS_LOCALHOST_ONLY=1
 ```
 
 If cross-device communication is required, please simplify the network environment as much as possible. Mini local network with only required devices is recommended.
+
+### 5.9 ROS Driver died immediately after stream started
+
+**Error Message**  
+
+```shell
+Device ready and streams activated
+[host_sdk_sample-2] process has died ......
+```
+
+**Test**
+
+Disable odin1/image	with sendrgb = 0 in control_command.yaml and try again. If the driver now works, it is likely that the issue is related to multiple version of opencv is installed on the system.
+
+**Resolution** 
+
+Purge the unused version of opencv and maintain a single complete version, then rebuild the driver and try again.
 
 ## 6.  Contact Information​​
 To help diagnose the issue, please provide the following details to our FAE engineer:

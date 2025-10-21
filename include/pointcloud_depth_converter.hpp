@@ -69,7 +69,6 @@ private:
 
     cv::Mat map_x_, map_y_;
     cv::Mat inv_map_x_, inv_map_y_;
-    cv::Mat depth_undistorted_;
 
     int scaled_width_, scaled_height_;
 

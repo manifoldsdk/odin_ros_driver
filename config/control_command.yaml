@@ -11,4 +11,6 @@ register_keys:
   sendrgbundistort: 0   # 0: off; 1: on
   recorddata: 0         # 0: off; 1: on
   devstatuslog: 1       # 0: off; 1: on
-
+  pubintensitygray: 0   # 0: off; 1: on
+  showpath: 0           # 0: off; 1: on
+  showcamerapose: 0     # 0: off; 1: on

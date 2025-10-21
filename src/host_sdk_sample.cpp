@@ -1,3 +1,16 @@
+/*
+Copyright 2025 Manifold Tech Ltd.(www.manifoldtech.com.co)
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+   http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 #include "host_sdk_sample.h"
 #include "yaml_parser.h"
 #include "rawCloudRender.h"
@@ -31,7 +44,7 @@
     #include <ros/package.h>
     #include <ros/ros.h> 
 #endif
-#define ros_driver_version "0.5.0"
+#define ros_driver_version "0.5.2"
 // Global variable declarations
 static device_handle odinDevice = nullptr;
 static std::atomic<bool> deviceConnected(false);
@@ -71,42 +84,52 @@ int g_sendrgb_compressed = 0;
 int g_sendrgb_undistort = 0;
 int g_record_data = 0;
 int g_devstatus_log = 0;
+int g_pub_intensity_gray = 0;
+int g_show_path = 0;
+int g_show_camerapose = 0;
 
+std::filesystem::path log_root_dir_;
 const char* DEV_STATUS_CSV_FILE = "dev_status.csv";
 FILE* dev_status_csv_file = nullptr;
 
 typedef struct  {
     struct timespec start = {0, 0};
-    double frame_count = 0.0;
-    std::atomic<double> fps;
+    struct timespec last = {0, 0};
+    int count = 0;
+    std::mutex fps_mutex;
 } fpsHandle;
 
-static void sensor_fps(fpsHandle* handle, const char* name, bool print = false) 
-{
+void update_count(fpsHandle* handle) {
     struct timespec now;
+    std::lock_guard<std::mutex> lock(handle->fps_mutex);
     clock_gettime(CLOCK_MONOTONIC, &now);
-
-    if (handle->start.tv_sec == 0 && handle->start.tv_nsec == 0) {
+    if (handle->count == 0) {
         handle->start = now;
+    } else {
+        handle->last = now;
     }
+    handle->count++;
+}
 
-    handle->frame_count += 1.0;
-
-    double elapsed = (now.tv_sec - handle->start.tv_sec)
-                   + (now.tv_nsec - handle->start.tv_nsec) / 1e9;
-
-    if (elapsed >= 1.0) {
-        handle->fps.store(handle->frame_count / elapsed);
-        if (print) {
-            #ifdef ROS2
-                RCLCPP_INFO(rclcpp::get_logger("device_cb"), "%s FPS: %f", name, handle->fps.load());
-            #else
-                ROS_INFO("%s FPS: %f", name, handle->fps.load());
-            #endif
-        }
-        handle->frame_count = 0;
-        handle->start = now;
+double cal_fps(fpsHandle* handle, const char* name, bool print = false) 
+{
+    std::lock_guard<std::mutex> lock(handle->fps_mutex);
+    if (handle->count < 2) {
+        return 0.0;
     }
+    double elapsed = (handle->last.tv_sec - handle->start.tv_sec)
+                   + (handle->last.tv_nsec - handle->start.tv_nsec) / 1e9;
+    double fps = (handle->count - 1) / elapsed;
+    if (print) {
+        #ifdef ROS2
+            RCLCPP_INFO(rclcpp::get_logger("device_cb"), "%s FPS: %f (count: %d, elapsed: %f)", name, fps, handle->count, elapsed);
+        #else
+            ROS_INFO("%s FPS: %f (count: %d, elapsed: %f)", name, fps, handle->count, elapsed);
+        #endif
+    }
+    handle->start = handle->last;
+    handle->count = 1;
+    return fps;
 }
 
 static fpsHandle rgb_rx_fps;
@@ -134,6 +157,51 @@ static RosNodeControlImpl g_rosNodeControlImpl;
 
 RosNodeControlInterface* getRosNodeControl() {
     return &g_rosNodeControlImpl;
+}
+
+// Return resident memory (RSS) in **megabytes** for a given PID
+double read_rss_mb(pid_t pid) {
+    std::string path = "/proc/" + std::to_string(pid) + "/status";
+    std::ifstream in(path);
+    if (!in) return 0.0;
+    std::string key;
+    long kb = 0;
+    while (in >> key) {
+        if (key == "VmRSS:") {        // VmRSS is reported in kB
+            in >> kb;
+            break;
+        }
+        in.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    }
+    return kb / 1024.0;               // convert to MB
+}
+
+double read_pss_mb(pid_t pid) {
+    std::string path = "/proc/" + std::to_string(pid) + "/smaps_rollup";
+    std::ifstream in(path);
+    if (!in) return 0.0;
+    std::string key;
+    long kb = 0;
+    while (in >> key) {
+        if (key == "Pss:") {     // Proportional Set Size in kB
+            in >> kb;
+            break;
+        }
+        in.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    }
+    return kb / 1024.0;          // convert to MB
+}
+
+// Recursively collect child PIDs of the given pid
+void collect_children(pid_t pid, std::vector<pid_t>& all) {
+    std::string task_path = "/proc/" + std::to_string(pid) +
+                            "/task/" + std::to_string(pid) + "/children";
+    std::ifstream in(task_path);
+    pid_t child;
+    while (in >> child) {
+        all.push_back(child);
+        collect_children(child, all);
+    }
 }
 
 void clear_all_queues();
@@ -403,6 +471,11 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
     imu_convert_data_t *imudata = nullptr;
     lidar_device_status_t *dev_info_data;
     
+    pid_t self = getpid();
+    std::vector<pid_t> pids;
+
+    double total_mb = 0.0;
+
     switch(data->type) {
         case LIDAR_DT_NONE:
             printf("empty lidar data type: %x\n", data->type);
@@ -411,35 +484,45 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
             if (g_sendrgb) {
                 g_ros_object->publishRgb((capture_Image_List_t *)&data->stream);
             }
-            sensor_fps(&rgb_rx_fps, "rgb_rx");
+            update_count(&rgb_rx_fps);
             break;
         case LIDAR_DT_RAW_IMU:
             if (g_sendimu) {
                 imudata = (imu_convert_data_t *)data->stream.imageList[0].pAddr;
                 g_ros_object->publishImu(imudata);
             }
-            sensor_fps(&imu_rx_fps, "imu_rx");
+            update_count(&imu_rx_fps);
             break;
         case LIDAR_DT_RAW_DTOF:
             if (g_senddtof ) {
                 g_ros_object->publishIntensityCloud((capture_Image_List_t *)&data->stream, 1);
             }
-            sensor_fps(&dtof_rx_fps, "dtof_rx");
+            if (g_pub_intensity_gray) {
+                g_ros_object->publishGrayUInt8((capture_Image_List_t *)&data->stream, 2);
+            }
+            update_count(&dtof_rx_fps);
             break;
         case LIDAR_DT_SLAM_CLOUD:
             if (g_sendcloudslam) {
                 g_ros_object->publishPC2XYZRGBA((capture_Image_List_t *)&data->stream, 0);
             }
-            sensor_fps(&slam_cloud_rx_fps, "slam_cloud_rx");
+            update_count(&slam_cloud_rx_fps);
             break;
         case LIDAR_DT_SLAM_ODOMETRY:
             if (g_sendodom) {
-                g_ros_object->publishOdometry((capture_Image_List_t *)&data->stream, false);
+                g_ros_object->publishOdometry((capture_Image_List_t *)&data->stream, false, g_show_path, g_show_camerapose);
             }
-            sensor_fps(&slam_odom_rx_fps, "slam_odom_rx");
+            update_count(&slam_odom_rx_fps);
             break;
         case LIDAR_DT_DEV_STATUS:
             dev_info_data = (lidar_device_status_t *)data->stream.imageList[0].pAddr;
+
+            pids.push_back(self);
+            collect_children(self, pids);
+            for (pid_t p : pids) {
+                total_mb += read_pss_mb(p); // read_rss_mb(p);
+            }
+
             if (g_devstatus_log) {
                 if (dev_status_csv_file) {
                     // append the data row
@@ -471,7 +554,8 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
                     rc = std::fprintf(dev_status_csv_file, "%.2f,%.2f,%.2f,", 
                         ((float)dev_info_data->rgb_sensor.configured_odr)/1000,
                         ((float)dev_info_data->rgb_sensor.tx_odr)/1000,
-                        (rgb_rx_fps.fps.load()));
+                        cal_fps(&rgb_rx_fps, "rgb_rx")
+                    );
                     if (rc < 0) { 
                         printf("Failed to write to dev_status_csv_file\n");
                     }
@@ -479,7 +563,8 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
                     rc = std::fprintf(dev_status_csv_file, "%.2f,%.2f,%.2f,",
                         ((float)dev_info_data->dtof_sensor.configured_odr)/1000,
                         ((float)dev_info_data->dtof_sensor.tx_odr)/1000,
-                        (dtof_rx_fps.fps.load()));
+                        cal_fps(&dtof_rx_fps, "dtof_rx")
+                    );
                     if (rc < 0) { 
                         printf("Failed to write to dev_status_csv_file\n");
                     }
@@ -487,18 +572,24 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
                     rc = std::fprintf(dev_status_csv_file, "%.2f,%.2f,%.2f,",
                         ((float)dev_info_data->imu_sensor.configured_odr)/1000,
                         ((float)dev_info_data->imu_sensor.tx_odr)/1000,
-                        (imu_rx_fps.fps.load()));
+                        cal_fps(&imu_rx_fps, "imu_rx")
+                    );
                     if (rc < 0) { 
                         printf("Failed to write to dev_status_csv_file\n");
                     }
 
-                    rc = std::fprintf(dev_status_csv_file, "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", 
+                    rc = std::fprintf(dev_status_csv_file, "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,", 
                         ((float)dev_info_data->slam_cloud_tx_odr)/1000,
-                        (slam_cloud_rx_fps.fps.load()),
+                        cal_fps(&slam_cloud_rx_fps, "slam_cloud_rx"),
                         ((float)dev_info_data->slam_odom_tx_odr)/1000,
-                        (slam_odom_rx_fps.fps.load()),
+                        cal_fps(&slam_odom_rx_fps, "slam_odom_rx"),
                         ((float)dev_info_data->slam_odom_highfreq_tx_odr)/1000,
-                        (slam_odom_highfreq_rx_fps.fps.load()));
+                        cal_fps(&slam_odom_highfreq_rx_fps, "slam_odom_highfreq_rx"));
+                    if (rc < 0) { 
+                        printf("Failed to write to dev_status_csv_file\n");
+                    }
+                                   
+                    rc = std::fprintf(dev_status_csv_file, "%.2f\n", total_mb);
                     if (rc < 0) { 
                         printf("Failed to write to dev_status_csv_file\n");
                     }
@@ -531,12 +622,14 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
                 printf("\n [dev_info] [rgb]: configured_odr: %.2f HZ, tx_odr: %.2f HZ, rx_odr: %.2f HZ \n", 
                     ((float)dev_info_data->rgb_sensor.configured_odr)/1000,
                     ((float)dev_info_data->rgb_sensor.tx_odr)/1000,
-                    (rgb_rx_fps.fps.load()));
+                    cal_fps(&rgb_rx_fps, "rgb_rx")
+                );
 
                 printf("\n [dev_info] [dtof]: configured_odr: %.2f HZ, tx_odr: %.2f HZ, rx_odr: %.2f HZ \n", 
                     ((float)dev_info_data->dtof_sensor.configured_odr)/1000,
                     ((float)dev_info_data->dtof_sensor.tx_odr)/1000,
-                    (dtof_rx_fps.fps.load()));
+                    cal_fps(&dtof_rx_fps, "dtof_rx")
+                );
                 printf("\n [dev_info] [dtof]: subframe_odr: %.2f \n", 
                     ((float)dev_info_data->dtof_sensor.subframe_odr)/1000);
                 printf("\n [dev_info] [dtof]: txtemp:%dC, rxtemp:%dC \n", dev_info_data->dtof_sensor.tx_temp, dev_info_data->dtof_sensor.rx_temp);
@@ -544,23 +637,29 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
                 printf("\n [dev_info] [imu]: configured_odr: %.2f HZ, tx_odr: %.2f HZ, rx_odr: %.2f HZ\n",
                     ((float) dev_info_data->imu_sensor.configured_odr)/1000,
                     ((float) dev_info_data->imu_sensor.tx_odr)/1000,
-                    (imu_rx_fps.fps.load())
+                    cal_fps(&imu_rx_fps, "imu_rx")
                 );
 
                 printf("\n [dev_info] [slam]: slam_cloud_tx_odr: %.2f HZ, rx_odr: %.2f HZ \n",
                     ((float)dev_info_data->slam_cloud_tx_odr)/1000,
-                    (slam_cloud_rx_fps.fps.load())
+                    cal_fps(&slam_cloud_rx_fps, "slam_cloud_rx")
                 );
 
                 printf("\n [dev_info] [slam]: slam_odom_tx_odr: %.2f HZ, rx_odr: %.2f HZ \n",
                     ((float)dev_info_data->slam_odom_tx_odr)/1000,
-                    (slam_odom_rx_fps.fps.load())
+                    cal_fps(&slam_odom_rx_fps, "slam_odom_rx")
                 );
 
                 printf("\n [dev_info] [slam]: slam_odom_highfreq_tx_odr: %.2f HZ, rx_odr: %.2f HZ \n",
                     ((float)dev_info_data->slam_odom_highfreq_tx_odr)/1000,
-                    (slam_odom_highfreq_rx_fps.fps.load())
+                    cal_fps(&slam_odom_highfreq_rx_fps, "slam_odom_highfreq_rx")
                 );
+
+                #ifdef ROS2
+                    RCLCPP_INFO(rclcpp::get_logger("dev_info"), "Total RAM (parent + children): %.2f MB", total_mb);
+                #else
+                    ROS_INFO("Total RAM (parent + children): %.2f MB", total_mb);
+                #endif
 
                 printf("\n------------------------------------------\n");
             }
@@ -568,9 +667,9 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
             case LIDAR_DT_SLAM_ODOMETRY_HIGHFREQ:
             {
                 if (g_sendodom) {
-                    g_ros_object->publishOdometry((capture_Image_List_t *)&data->stream, true);
+                    g_ros_object->publishOdometry((capture_Image_List_t *)&data->stream, true, false, false);
                 }
-                sensor_fps(&slam_odom_highfreq_rx_fps, "slam_odom_highfreq_rx");
+                update_count(&slam_odom_highfreq_rx_fps);
             }
             break;
         default:
@@ -762,6 +861,46 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             odinDevice = nullptr;
             return;
         }
+        
+        auto con_time = std::chrono::system_clock::now();
+        std::time_t t = std::chrono::system_clock::to_time_t(con_time);
+        std::tm tm{};
+        #ifdef _WIN32
+            localtime_s(&tm, &t);
+        #else
+            localtime_r(&t, &tm);
+        #endif
+        char buf[32];
+        std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &tm);
+        std::string folder_name = std::string("Conn_") + std::string(buf);
+        std::filesystem::path per_con_log_root_dir_ = log_root_dir_ / folder_name;
+        std::filesystem::create_directories(per_con_log_root_dir_);
+        std::string dev_status_csv_file_path_ = per_con_log_root_dir_ / "dev_status.csv";
+
+        if (dev_status_csv_file) {
+            std::fflush(dev_status_csv_file);
+            fclose(dev_status_csv_file);
+            dev_status_csv_file = nullptr;
+        }
+
+        // Open the file in append mode
+        dev_status_csv_file = fopen(dev_status_csv_file_path_.c_str(), "a");
+        if (!dev_status_csv_file) {
+            #ifdef ROS2
+                RCLCPP_ERROR(rclcpp::get_logger("init"), "Failed to open dev_status CSV file");
+            #else
+                ROS_ERROR("Failed to open dev_status CSV file");
+            #endif
+        } else {
+            const char* header =
+            "uptime_seconds,package_temp,cpu_temp,center_temp,gpu_temp,npu_temp,dtof_tx_temp,dtof_rx_temp,"
+            "cpu0,cpu1,cpu2,cpu3,cpu4,cpu5,cpu6,cpu7,ram_use(%),"
+            "rgb_configured_odr,rgb_tx_odr,rgb_rx_odr,dtof_configured_odr,dtof_tx_odr,dtof_rx_odr,imu_configured_odr,imu_tx_odr,imu_rx_odr,"
+            "slam_cloud_tx_odr,slam_cloud_rx_odr,slam_odom_tx_odr,slam_odom_rx_odr,slam_odom_highfreq_tx_odr,slam_odom_highfreq_rx_odr,"
+            "host_ram_use(mb)\n";
+            fprintf(dev_status_csv_file, "%s", header);
+            std::fflush(dev_status_csv_file);
+        }
 
         uint32_t dtof_subframe_odr = 0;
         if (lidar_start_stream(odinDevice, type, dtof_subframe_odr)) {
@@ -800,7 +939,8 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         deviceConnected = true;
         deviceDisconnected = false; 
         
-        if (g_sendrgb_undistort && g_ros_object->loadCameraParams(calib_config) == 0) {
+        bool load_status = g_ros_object->loadCameraParams(calib_config);
+        if (g_sendrgb_undistort &&  load_status == 0) {
             g_ros_object->buildUndistortMap();
         }
 
@@ -824,6 +964,12 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         deviceDisconnected = true;
 
         clear_all_queues();
+
+        if (dev_status_csv_file) {
+            std::fflush(dev_status_csv_file);
+            fclose(dev_status_csv_file);
+            dev_status_csv_file = nullptr;
+        }
 
         #ifdef ROS2
             RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Waiting for device reconnection...");
@@ -883,6 +1029,9 @@ int main(int argc, char *argv[])
         g_record_data = get_key_value("recorddata", 0);
         g_show_fps = get_key_value("showfps", 0);
         g_devstatus_log = get_key_value("devstatuslog", 0);
+        g_pub_intensity_gray = get_key_value("pubintensitygray", 0);
+        g_show_path = get_key_value("showpath", 0);
+        g_show_camerapose = get_key_value("showcamerapose", 0);
         g_log_level = get_key_value("log_devel", LOG_LEVEL_INFO);
         lidar_log_set_level(LIDAR_LOG_INFO);
 
@@ -925,28 +1074,9 @@ int main(int argc, char *argv[])
             #endif
             char buf[32];
             std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &tm);
-
-            std::filesystem::path log_root_dir_ = std::filesystem::path(log_dir) / buf;
+            std::string folder_name = std::string("Driver_") + std::string(buf);
+            log_root_dir_ = std::filesystem::path(log_dir) / folder_name;
             std::filesystem::create_directories(log_root_dir_);
-            std::string dev_status_csv_file_path_ = log_root_dir_ / "dev_status.csv";
-
-            // Open the file in append mode
-            dev_status_csv_file = fopen(dev_status_csv_file_path_.c_str(), "a");
-            if (!dev_status_csv_file) {
-                #ifdef ROS2
-                    RCLCPP_ERROR(rclcpp::get_logger("init"), "Failed to open dev_status CSV file");
-                #else
-                    ROS_ERROR("Failed to open dev_status CSV file");
-                #endif
-            } else {
-                const char* header =
-                "uptime_seconds,package_temp,cpu_temp,center_temp,gpu_temp,npu_temp,dtof_tx_temp,dtof_rx_temp,"
-                "cpu0,cpu1,cpu2,cpu3,cpu4,cpu5,cpu6,cpu7,ram_use,"
-                "rgb_configured_odr,rgb_tx_odr,rgb_rx_odr,dtof_configured_odr,dtof_tx_odr,dtof_rx_odr,imu_configured_odr,imu_tx_odr,imu_rx_odr,"
-                "slam_cloud_tx_odr,slam_cloud_rx_odr,slam_odom_tx_odr,slam_odom_rx_odr,slam_odom_highfreq_tx_odr,slam_odom_highfreq_rx_odr\n";
-                fprintf(dev_status_csv_file, "%s", header);
-                std::fflush(dev_status_csv_file);
-            }
         }
 
         if (lidar_system_init(lidar_device_callback)) {
@@ -1121,8 +1251,11 @@ int main(int argc, char *argv[])
         // lidar_close_device(odinDevice);
         // lidar_destory_device(odinDevice);
 
-        std::fflush(dev_status_csv_file);
-        fclose(dev_status_csv_file);
+        if (dev_status_csv_file) {
+            std::fflush(dev_status_csv_file);
+            fclose(dev_status_csv_file);
+            dev_status_csv_file = nullptr;
+        }
     }
     // lidar_system_deinit();
 

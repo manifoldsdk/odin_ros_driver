@@ -42,9 +42,11 @@ limitations under the License.
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <filesystem>
 
 #include <yaml-cpp/yaml.h>
 #include "polynomial_camera.hpp"
+#include "camera_pose_visualization.h"
 
 struct CameraParams {
     int width, height;
@@ -67,6 +69,7 @@ extern int g_sendcloudrender;
     #include "rclcpp/rclcpp.hpp"
     #include "std_msgs/msg/string.hpp"
     #include <std_msgs/msg/header.hpp>
+    #include <visualization_msgs/msg/marker_array.hpp>
     #include "sensor_msgs/msg/image.hpp"
     #include "sensor_msgs/msg/imu.hpp"
     #include "sensor_msgs/msg/point_cloud2.hpp"
@@ -74,12 +77,14 @@ extern int g_sendcloudrender;
     #include <sensor_msgs/msg/compressed_image.hpp>
     #include <builtin_interfaces/msg/time.hpp>
     #include <nav_msgs/msg/odometry.hpp>
+    #include <nav_msgs/msg/path.hpp>
     #include <sensor_msgs/msg/point_field.hpp>
     namespace ros {
         using namespace rclcpp;
         using namespace std_msgs::msg;
         using namespace sensor_msgs::msg;
         using namespace nav_msgs::msg;
+        using namespace visualization_msgs::msg;
         using Time = builtin_interfaces::msg::Time;
     }
     
@@ -99,7 +104,9 @@ extern int g_sendcloudrender;
     #include <sensor_msgs/point_cloud2_iterator.h>
     #include <sensor_msgs/CompressedImage.h>
     #include <nav_msgs/Odometry.h>
+    #include <nav_msgs/Path.h>
     #include <sensor_msgs/Image.h>
+    
     namespace ros {
         using namespace ::ros;
         using namespace sensor_msgs;
@@ -174,12 +181,13 @@ class MultiSensorPublisher {
 public:
     #ifdef ROS2
         MultiSensorPublisher(rclcpp::Node::SharedPtr node)
-            : node_(node) {
+            : node_(node),cameraposevisual_ {1.0f, 0.0f, 0.0f, 1.0f} {
             initialize_publishers();
             // initialize_data_logger();
         }
     #else
-        MultiSensorPublisher(ros::NodeHandle& nh) {
+        MultiSensorPublisher(ros::NodeHandle& nh)
+            : cameraposevisual_(1.0f, 0.0f, 0.0f, 1.0f) {
             initialize_publishers(nh);
             // initialize_data_logger();
         }
@@ -573,7 +581,8 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
                 *iter_confidence = confidence_data[i]; ++iter_confidence;
                 
                 if (dtof_subframe_odr > 0.0) {
-                    int group = i / DTOF_NUM_ROW_PER_GROUP;
+                    int line_num = i / 256;
+                    int group = line_num / DTOF_NUM_ROW_PER_GROUP;
                     float timestamp_offset = group * 1.0 / dtof_subframe_odr;
 
                     *iter_offsettime = timestamp_offset;
@@ -633,6 +642,33 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
         cloud_pub_.publish(msg);
     #endif
 }
+
+    void publishGrayUInt8(capture_Image_List_t *stream, int idx) {
+        ImageMsg msg;
+        msg.header.stamp = ns_to_ros_time(stream->imageList[idx].timestamp);
+        msg.header.frame_id = "map";
+
+        int width = stream->imageList[idx].width;
+        int height = stream->imageList[idx].height;
+
+        msg.height = height;
+        msg.width = width;
+        msg.encoding = "mono8";
+        msg.is_bigendian = false;
+        msg.step = width * sizeof(uint8_t);
+
+        size_t image_size = msg.step * height;
+
+        msg.data.resize(image_size);
+
+        memcpy(msg.data.data(), stream->imageList[idx].pAddr, image_size);
+
+        #ifdef ROS2
+            intensity_gray_pub_->publish(msg);
+        #else
+            intensity_gray_pub_.publish(msg);
+        #endif
+    }
 
     void publishRgb(capture_Image_List_t *stream) {
     buffer_List_t &image = stream->imageList[0];
@@ -991,7 +1027,7 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
 #endif
     }
 
-    void publishOdometry(capture_Image_List_t* stream, bool is_highfreq) {
+    void publishOdometry(capture_Image_List_t* stream, bool is_highfreq, bool show_path, bool show_camerapose) {
         
 #ifdef ROS2
             auto msg = nav_msgs::msg::Odometry();
@@ -1080,12 +1116,123 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
                 odom_highfreq_publisher_->publish(std::move(msg));
             } else {
                 odom_publisher_->publish(std::move(msg));
+
+                // Publish odom trajectory as visualization markers (green lines connecting adjacent points)
+                static visualization_msgs::msg::Marker marker;
+                static std::vector<geometry_msgs::msg::Point> path_points;
+                
+                if (show_path) {
+                    marker.header = msg.header;
+                    marker.ns = "odom_trajectory";
+                    marker.id = 0;
+                    marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
+                    marker.action = visualization_msgs::msg::Marker::ADD;
+                    marker.pose.orientation.w = 1.0;
+                    marker.scale.x = 0.02;  // Line width
+                    marker.color.r = 0.0;
+                    marker.color.g = 1.0;
+                    marker.color.b = 0.0;
+                    marker.color.a = 1.0;
+    
+                    geometry_msgs::msg::Point pt;
+                    pt.x = msg.pose.pose.position.x;
+                    pt.y = msg.pose.pose.position.y;
+                    pt.z = msg.pose.pose.position.z;
+                    path_points.push_back(pt);
+                    
+                    // Keep only recent points to avoid memory issues (e.g., last 1000 points)
+                    if (path_points.size() > 30000) {
+                        path_points.erase(path_points.begin());
+                    }
+                    
+                    marker.points = path_points;
+    
+                    // Publish marker array
+                    static visualization_msgs::msg::MarkerArray marker_array;
+                    marker_array.markers.clear();  // Clear previous markers
+                    marker_array.markers.push_back(marker);
+                    path_publisher_->publish(marker_array);
+                }
+
+                if (show_camerapose) {
+                    // camera pose visualization (ROS2)
+                    Eigen::Vector3d P(msg.pose.pose.position.x,
+                                    msg.pose.pose.position.y,
+                                    msg.pose.pose.position.z);
+                    Eigen::Quaterniond R(msg.pose.pose.orientation.w,
+                                        msg.pose.pose.orientation.x,
+                                        msg.pose.pose.orientation.y,
+                                        msg.pose.pose.orientation.z);
+                    if (extrinsic_ok_) {
+                        P = P + R * t_ic_;
+                        R = R * R_ic_;
+                    }
+                    cameraposevisual_.reset();
+                    cameraposevisual_.add_pose(P, R);
+                    cameraposevisual_.publish_by(*pub_camera_pose_visual_, msg.header);
+                }
             }
 #else
             if (is_highfreq) {
                 odom_highfreq_publisher_.publish(msg);
             } else {
                 odom_publisher_.publish(msg);
+
+                if (show_path) {
+                    // Publish odom trajectory as visualization markers (green lines connecting adjacent points)
+                    static visualization_msgs::Marker marker;
+                    static std::vector<geometry_msgs::Point> path_points;
+                    
+                    marker.header = msg.header;
+                    marker.ns = "odom_trajectory";
+                    marker.id = 0;
+                    marker.type = visualization_msgs::Marker::LINE_STRIP;
+                    marker.action = visualization_msgs::Marker::ADD;
+                    marker.pose.orientation.w = 1.0;
+                    marker.scale.x = 0.02;  // Line width
+                    marker.color.r = 0.0;
+                    marker.color.g = 1.0;
+                    marker.color.b = 0.0;
+                    marker.color.a = 1.0;
+
+                    geometry_msgs::Point pt;
+                    pt.x = msg.pose.pose.position.x;
+                    pt.y = msg.pose.pose.position.y;
+                    pt.z = msg.pose.pose.position.z;
+                    path_points.push_back(pt);
+                    
+                    // Keep only recent points to avoid memory issues (e.g., last 1000 points)
+                    if (path_points.size() > 30000) {
+                        path_points.erase(path_points.begin());
+                    }
+                    
+                    marker.points = path_points;
+
+                    // Publish marker array
+                    static visualization_msgs::MarkerArray marker_array;
+                    marker_array.markers.clear();  // Clear previous markers
+                    marker_array.markers.push_back(marker);
+                    path_publisher_.publish(marker_array);
+                }
+
+                if (show_camerapose) {
+                    // camera pose visualization (ROS1)
+                    Eigen::Vector3d P(msg.pose.pose.position.x,
+                                    msg.pose.pose.position.y,
+                                    msg.pose.pose.position.z);
+                    Eigen::Quaterniond R(msg.pose.pose.orientation.w,
+                                        msg.pose.pose.orientation.x,
+                                        msg.pose.pose.orientation.y,
+                                        msg.pose.pose.orientation.z);
+                        
+                    if (extrinsic_ok_) {
+                        P = P + R * t_ic_;
+                        R = R * R_ic_;
+                    }
+                    cameraposevisual_.reset();
+                    cameraposevisual_.add_pose(P, R);
+                    cameraposevisual_.publish_by(pub_camera_pose_visual_, msg.header);
+                }
             }
 #endif
     }
@@ -1152,6 +1299,25 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
             m_cam = std::make_unique<mini_vikit::PolynomialCamera>(m_camera_params.width, m_camera_params.height,
                 m_camera_params.fx, m_camera_params.fy, m_camera_params.cx, m_camera_params.cy, m_camera_params.skew,
                 m_camera_params.k2, m_camera_params.k3, m_camera_params.k4, m_camera_params.k5, m_camera_params.k6, m_camera_params.k7);
+
+            // Load extrinsic Tcl_0 (camera to lidar)
+            extrinsic_ok_ = false;
+            if (config["Tcl_0"]) {
+                auto T = config["Tcl_0"];
+                if (T.IsSequence() && T.size() == 16) {
+                    Eigen::Matrix4d Tcl;
+                    for (int i = 0; i < 16; ++i) Tcl(i/4, i%4) = T[i].as<double>();
+                    T_cl_ = Tcl;
+                }
+                std::cout << "Tcl: " << T_cl_ << std::endl;
+
+                Eigen::Matrix4d Tic = T_il_ * T_cl_.inverse();
+                Eigen::Matrix3d Ric = Tic.block<3,3>(0,0);
+                Eigen::Vector3d tic = Tic.block<3,1>(0,3);
+                R_ic_ = Eigen::Quaterniond(Ric);
+                t_ic_ = tic;
+                extrinsic_ok_ = true;
+            }
 
             m_cam_init_success = true;
             return 0;
@@ -1235,6 +1401,15 @@ private:
     bool m_undistort_map_init_success = false;
     cv::Mat m_undistort_map_x;
     cv::Mat m_undistort_map_y;
+    Eigen::Quaterniond R_ic_ {Eigen::Quaterniond::Identity()};
+    Eigen::Vector3d t_ic_ {Eigen::Vector3d::Zero()};
+    bool extrinsic_ok_ {false};
+    Eigen::Matrix4d T_il_ = (Eigen::Matrix4d() <<
+        1.0, 0.0, 0.0, 0.00347,
+        0.0, 1.0, 0.0, 0.03447,
+        0.0, 0.0, 1.0, 0.02174,
+        0.0, 0.0, 0.0, 1.0).finished();
+    Eigen::Matrix4d T_cl_ = Eigen::Matrix4d::Identity(); // Camera->Lidar from YAML
 #ifdef ROS2
     std::vector<sensor_msgs::msg::PointCloud2> getIntensityCloudQueueSnapshot() {
         std::lock_guard<std::mutex> lock(pcd_queue_mutex_);
@@ -1267,9 +1442,12 @@ private:
             xyzrgbacloud_pub_ = node_->create_publisher<ros::PointCloud2>("odin1/cloud_slam", 10);
             odom_publisher_ = node_->create_publisher<ros::Odometry>("odin1/odometry", 10);
             odom_highfreq_publisher_ = node_->create_publisher<ros::Odometry>("odin1/odometry_highfreq", 10);
+            path_publisher_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>("odin1/path", 10);
+            pub_camera_pose_visual_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>("odin1/camera_pose_visual", 10);
             rgbcloud_pub_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("odin1/cloud_render", 10);
-	    compressed_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::CompressedImage>("odin1/image/compressed", 10);
-        undistort_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::Image>("odin1/image/undistorted", 10);
+            compressed_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::CompressedImage>("odin1/image/compressed", 10);
+            undistort_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::Image>("odin1/image/undistorted", 10);
+            intensity_gray_pub_ = node_->create_publisher<sensor_msgs::msg::Image>("odin1/image/intensity_gray", 10);
         #endif
     }
     #ifdef ROS1
@@ -1280,9 +1458,12 @@ private:
             xyzrgbacloud_pub_ = nh.advertise<ros::PointCloud2>("odin1/cloud_slam", 10);
             odom_publisher_ = nh.advertise<ros::Odometry>("odin1/odometry", 10);
             odom_highfreq_publisher_ = nh.advertise<ros::Odometry>("odin1/odometry_highfreq", 10);
+            path_publisher_ = nh.advertise<visualization_msgs::MarkerArray>("odin1/path", 10);
+            pub_camera_pose_visual_ = nh.advertise<visualization_msgs::MarkerArray>("odin1/camera_pose_visual", 10);
             rgbcloud_pub_ = nh.advertise<sensor_msgs::PointCloud2>("odin1/cloud_render", 10);
             compressed_rgb_pub_ = nh.advertise<sensor_msgs::CompressedImage>("odin1/image/compressed", 10);
             undistort_rgb_pub_ = nh.advertise<sensor_msgs::Image>("odin1/image/undistorted", 10);
+            intensity_gray_pub_ = nh.advertise<sensor_msgs::Image>("odin1/image/intensity_gray", 10);
         }
     #endif
 
@@ -1294,11 +1475,15 @@ private:
         rclcpp::Publisher<ros::PointCloud2>::SharedPtr xyzrgbacloud_pub_;
         rclcpp::Publisher<ros::Odometry>::SharedPtr odom_publisher_;
         rclcpp::Publisher<ros::Odometry>::SharedPtr odom_highfreq_publisher_;
+        rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr path_publisher_;
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr rendered_cloud_pub_;
         rclcpp::Publisher<PointCloud2Msg>::SharedPtr rgbcloud_pub_;
         rclcpp::Publisher<ImageMsg>::SharedPtr rgbFromnv12_pub_;
         rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_rgb_pub_; // New compressed image publisher
         rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr undistort_rgb_pub_;
+        rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr intensity_gray_pub_;
+        rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_camera_pose_visual_;
+        camera_pose_visualization cameraposevisual_;
     #else
         ros::Publisher imu_pub_;
         ros::Publisher rgb_pub_;
@@ -1306,11 +1491,15 @@ private:
         ros::Publisher xyzrgbacloud_pub_;
         ros::Publisher odom_publisher_;
         ros::Publisher odom_highfreq_publisher_;
+        ros::Publisher path_publisher_;
+        ros::Publisher pub_camera_pose_visual_;
+        camera_pose_visualization cameraposevisual_;
         ros::Publisher rendered_cloud_pub_;
         ros::Publisher rgbcloud_pub_;
         ros::Publisher rgbFromnv12_pub_;
         ros::Publisher compressed_rgb_pub_; // New compressed image publisher
         ros::Publisher undistort_rgb_pub_;
+        ros::Publisher intensity_gray_pub_;
     #endif
 };
 

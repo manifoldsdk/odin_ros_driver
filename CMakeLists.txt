@@ -161,6 +161,7 @@ if(ROS_VERSION STREQUAL "ROS1")
         src/host_sdk_sample.cpp
         src/yaml_parser.cpp
         src/rawCloudRender.cpp
+        src/camera_pose_visualization.cpp
     )
     target_link_libraries(host_sdk_sample
         ${catkin_LIBRARIES}
@@ -218,6 +219,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     find_package(std_msgs REQUIRED)
     find_package(sensor_msgs REQUIRED)
     find_package(nav_msgs REQUIRED)
+    find_package(visualization_msgs REQUIRED)
     find_package(cv_bridge REQUIRED)
     find_package(image_transport REQUIRED)
     find_package(pcl_conversions REQUIRED)
@@ -228,6 +230,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         src/host_sdk_sample.cpp
         src/yaml_parser.cpp  
         src/rawCloudRender.cpp
+        src/camera_pose_visualization.cpp
         )
     
     # Link libraries
@@ -244,6 +247,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         std_msgs 
         sensor_msgs 
         nav_msgs 
+        visualization_msgs
         cv_bridge
         image_transport
     )
@@ -339,6 +343,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         std_msgs 
         sensor_msgs 
         nav_msgs 
+        visualization_msgs
         cv_bridge
         image_transport
         pcl_conversions
