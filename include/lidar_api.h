@@ -197,6 +197,54 @@ void lidar_log_set_level(lidar_log_level_e level);
  */
 int lidar_get_version(device_handle device);
 
+/**
+ * @brief Set custom algorithm parameters for the device
+ * 
+ * Sends custom parameter settings to the device.
+ *
+ * @param device Handle to the target device
+ * @param param_name String name of the parameter to set
+ * @param value_data Pointer to the value data to set for the parameter
+ * @param value_length Length of the value data in bytes
+ * @return int 0 on success, negative error code on failure
+ */
+int lidar_set_custom_parameter(device_handle device, const char* param_name, const void* value_data, size_t value_length);
+
+/**
+ * @brief Get custom algorithm parameters for the device
+ * 
+ * Get custom parameter settings from the device.
+ *
+ * @param device Handle to the target device
+ * @param param_name String name of the parameter to get
+ * @param value Integer value to get for the parameter
+ * @return int 0 on success, negative error code on failure
+ */
+int lidar_get_custom_parameter(device_handle device, const char* param_name, int* value);
+
+/**
+ * @brief Set the map file used for relocalization
+ *
+ * Read & send specified map file to device for relocalization
+ *
+ * @param device Handle to the target device
+ * @param abs_path Absolute path to the map file
+ * @return int 0 on success, otherwise on failure
+ */
+ int lidar_set_relocalization_map(device_handle device, const char* abs_path);
+
+ /**
+ * @brief Get the mapping result file from device
+ *
+ * Read & send specified map file from device to host
+ *
+ * @param device Handle to the target device
+ * @param dest_dir Destination directory to save the map file
+ * @param file_name File name to save the map file
+ * @return int 0 on success, -1 on failure without error code, error code (> 0) otherwise
+ */
+ int lidar_get_mapping_result(device_handle device, const char* dest_dir, const char* file_name);
+
 #ifdef __cplusplus
 }
 #endif

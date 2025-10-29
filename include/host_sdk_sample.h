@@ -55,6 +55,12 @@ struct CameraParams {
     double p1, p2;
 };
 
+enum class OdometryType {
+    STANDARD = LIDAR_DT_SLAM_ODOMETRY,
+    HIGHFREQ = LIDAR_DT_SLAM_ODOMETRY_HIGHFREQ,
+    TRANSFORM = LIDAR_DT_SLAM_ODOMETRY_TF
+};
+
 #define LOG_LEVEL_NONE 0
 #define LOG_LEVEL_ERROR 1
 #define LOG_LEVEL_WARN 2
@@ -79,6 +85,8 @@ extern int g_sendcloudrender;
     #include <nav_msgs/msg/odometry.hpp>
     #include <nav_msgs/msg/path.hpp>
     #include <sensor_msgs/msg/point_field.hpp>
+    #include "tf2/LinearMath/Quaternion.h"
+    #include "tf2_ros/transform_broadcaster.h"
     namespace ros {
         using namespace rclcpp;
         using namespace std_msgs::msg;
@@ -106,7 +114,9 @@ extern int g_sendcloudrender;
     #include <nav_msgs/Odometry.h>
     #include <nav_msgs/Path.h>
     #include <sensor_msgs/Image.h>
-    
+    #include <tf2_ros/transform_broadcaster.h>
+    #include <tf2/LinearMath/Quaternion.h>
+    #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
     namespace ros {
         using namespace ::ros;
         using namespace sensor_msgs;
@@ -454,7 +464,7 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
          
         // Create and publish RGB point cloud
         PointCloud2Msg output_msg;
-        output_msg.header.frame_id = "map";
+        output_msg.header.frame_id = "odin1_base_link";
         output_msg.header.stamp = rgb_msg->header.stamp; // Use original image timestamp
         output_msg.height = 1;
         output_msg.width = valid_point_num;
@@ -523,7 +533,7 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
     #endif
 
     // Set message header
-    msg->header.frame_id = "map";
+    msg->header.frame_id = "odin1_base_link";
     msg->header.stamp = ns_to_ros_time(cloud.timestamp);
 
     msg->height = cloud.height;
@@ -901,9 +911,9 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
     {
         #ifdef ROS2
                 sensor_msgs::msg::PointCloud2 msg;
-                msg.header.frame_id = "map";
+                msg.header.frame_id = "odom";
                 msg.header.stamp = ns_to_ros_time(stream->imageList[0].timestamp);
-  
+
                 //RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Point cloudrgba %ld",stream->imageList[0].timestamp);
 
                 size_t pt_size = sizeof(int32_t) * 3 + sizeof(int32_t) * 4;
@@ -929,7 +939,7 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
                 sensor_msgs::PointCloud2Iterator<float> iter_rgb(msg, "rgb");
         #else
             sensor_msgs::PointCloud2 msg;
-            msg.header.frame_id = "map";
+            msg.header.frame_id = "odom";
             msg.header.stamp = ns_to_ros_time(stream->imageList[0].timestamp);
             
             size_t pt_size = sizeof(int32_t) * 3 + sizeof(int32_t) * 4;
@@ -1027,7 +1037,7 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
 #endif
     }
 
-    void publishOdometry(capture_Image_List_t* stream, bool is_highfreq, bool show_path, bool show_camerapose) {
+    void publishOdometry(capture_Image_List_t* stream, OdometryType odom_type, bool show_path, bool show_camerapose) {
         
 #ifdef ROS2
             auto msg = nav_msgs::msg::Odometry();
@@ -1035,8 +1045,8 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
             ros::Odometry msg;
 #endif
         
-            msg.header.frame_id = "map";
-            msg.child_frame_id = "base_link";
+            msg.header.frame_id = "odom";
+            msg.child_frame_id = "odin1_base_link";
 
             //RCLCPP_INFO(rclcpp::get_logger("device_cb"), "odom %ld",odom_data->timestamp_ns);
 
@@ -1056,7 +1066,7 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
                 msg.pose.pose.orientation.w = static_cast<double>(odom_data->orient[3]) / 1e6;
 
                 // Enqueue binary logging for pose
-                if (!is_highfreq && data_logger_) {
+                if ((odom_type == OdometryType::STANDARD) && data_logger_) {
                     const uint32_t idx_now = pose_index_.fetch_add(1, std::memory_order_relaxed);
                     const double ts_sec = static_cast<double>(odom_data->timestamp_ns) / 1e9;
                     float pose_arr[7];
@@ -1112,127 +1122,193 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
             }
 
 #ifdef ROS2
-            if (is_highfreq) {
-                odom_highfreq_publisher_->publish(std::move(msg));
-            } else {
-                odom_publisher_->publish(std::move(msg));
+            switch(odom_type) {
+                case OdometryType::STANDARD:
+                    {
+                    geometry_msgs::msg::TransformStamped transformStamped;
+                    transformStamped.header.stamp = msg.header.stamp;
+                    transformStamped.header.frame_id = "odom";
+                    transformStamped.child_frame_id = "odin1_base_link";
+                    transformStamped.transform.translation.x = msg.pose.pose.position.x;
+                    transformStamped.transform.translation.y = msg.pose.pose.position.y;
+                    transformStamped.transform.translation.z = msg.pose.pose.position.z;
+                    transformStamped.transform.rotation.x = msg.pose.pose.orientation.x;
+                    transformStamped.transform.rotation.y = msg.pose.pose.orientation.y;
+                    transformStamped.transform.rotation.z = msg.pose.pose.orientation.z;
+                    transformStamped.transform.rotation.w = msg.pose.pose.orientation.w;
+                    tf_broadcaster->sendTransform(transformStamped);
+                    odom_publisher_->publish(msg);
 
-                // Publish odom trajectory as visualization markers (green lines connecting adjacent points)
-                static visualization_msgs::msg::Marker marker;
-                static std::vector<geometry_msgs::msg::Point> path_points;
-                
-                if (show_path) {
-                    marker.header = msg.header;
-                    marker.ns = "odom_trajectory";
-                    marker.id = 0;
-                    marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
-                    marker.action = visualization_msgs::msg::Marker::ADD;
-                    marker.pose.orientation.w = 1.0;
-                    marker.scale.x = 0.02;  // Line width
-                    marker.color.r = 0.0;
-                    marker.color.g = 1.0;
-                    marker.color.b = 0.0;
-                    marker.color.a = 1.0;
-    
-                    geometry_msgs::msg::Point pt;
-                    pt.x = msg.pose.pose.position.x;
-                    pt.y = msg.pose.pose.position.y;
-                    pt.z = msg.pose.pose.position.z;
-                    path_points.push_back(pt);
+                    // Publish odom trajectory as visualization markers (green lines connecting adjacent points)
+                    static visualization_msgs::msg::Marker marker;
+                    static std::vector<geometry_msgs::msg::Point> path_points;
                     
-                    // Keep only recent points to avoid memory issues (e.g., last 1000 points)
-                    if (path_points.size() > 30000) {
-                        path_points.erase(path_points.begin());
+                    if (show_path) {
+                        marker.header = msg.header;
+                        marker.ns = "odom_trajectory";
+                        marker.id = 0;
+                        marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
+                        marker.action = visualization_msgs::msg::Marker::ADD;
+                        marker.pose.orientation.w = 1.0;
+                        marker.scale.x = 0.02;  // Line width
+                        marker.color.r = 0.0;
+                        marker.color.g = 1.0;
+                        marker.color.b = 0.0;
+                        marker.color.a = 1.0;
+        
+                        geometry_msgs::msg::Point pt;
+                        pt.x = msg.pose.pose.position.x;
+                        pt.y = msg.pose.pose.position.y;
+                        pt.z = msg.pose.pose.position.z;
+                        path_points.push_back(pt);
+                        
+                        // Keep only recent points to avoid memory issues (e.g., last 1000 points)
+                        if (path_points.size() > 30000) {
+                            path_points.erase(path_points.begin());
+                        }
+                        
+                        marker.points = path_points;
+        
+                        // Publish marker array
+                        static visualization_msgs::msg::MarkerArray marker_array;
+                        marker_array.markers.clear();  // Clear previous markers
+                        marker_array.markers.push_back(marker);
+                        path_publisher_->publish(marker_array);
                     }
-                    
-                    marker.points = path_points;
-    
-                    // Publish marker array
-                    static visualization_msgs::msg::MarkerArray marker_array;
-                    marker_array.markers.clear();  // Clear previous markers
-                    marker_array.markers.push_back(marker);
-                    path_publisher_->publish(marker_array);
-                }
 
-                if (show_camerapose) {
-                    // camera pose visualization (ROS2)
-                    Eigen::Vector3d P(msg.pose.pose.position.x,
-                                    msg.pose.pose.position.y,
-                                    msg.pose.pose.position.z);
-                    Eigen::Quaterniond R(msg.pose.pose.orientation.w,
-                                        msg.pose.pose.orientation.x,
-                                        msg.pose.pose.orientation.y,
-                                        msg.pose.pose.orientation.z);
-                    if (extrinsic_ok_) {
-                        P = P + R * t_ic_;
-                        R = R * R_ic_;
+                    if (show_camerapose) {
+                        // camera pose visualization (ROS2)
+                        Eigen::Vector3d P(msg.pose.pose.position.x,
+                                        msg.pose.pose.position.y,
+                                        msg.pose.pose.position.z);
+                        Eigen::Quaterniond R(msg.pose.pose.orientation.w,
+                                            msg.pose.pose.orientation.x,
+                                            msg.pose.pose.orientation.y,
+                                            msg.pose.pose.orientation.z);
+                        if (extrinsic_ok_) {
+                            P = P + R * t_ic_;
+                            R = R * R_ic_;
+                        }
+                        cameraposevisual_.reset();
+                        cameraposevisual_.add_pose(P, R);
+                        cameraposevisual_.publish_by(*pub_camera_pose_visual_, msg.header);
                     }
-                    cameraposevisual_.reset();
-                    cameraposevisual_.add_pose(P, R);
-                    cameraposevisual_.publish_by(*pub_camera_pose_visual_, msg.header);
-                }
+                    }
+                    break;
+                case OdometryType::HIGHFREQ:
+                    odom_highfreq_publisher_->publish(std::move(msg));
+                    break;
+                case OdometryType::TRANSFORM:
+                    {
+                    geometry_msgs::msg::TransformStamped transformStamped;
+                    transformStamped.header.stamp = msg.header.stamp;
+                    transformStamped.header.frame_id = "odom";
+                    transformStamped.child_frame_id = "map";
+                    transformStamped.transform.translation.x = msg.pose.pose.position.x;
+                    transformStamped.transform.translation.y = msg.pose.pose.position.y;
+                    transformStamped.transform.translation.z = msg.pose.pose.position.z;
+                    transformStamped.transform.rotation.x = msg.pose.pose.orientation.x;
+                    transformStamped.transform.rotation.y = msg.pose.pose.orientation.y;
+                    transformStamped.transform.rotation.z = msg.pose.pose.orientation.z;
+                    transformStamped.transform.rotation.w = msg.pose.pose.orientation.w;
+                    tf_broadcaster->sendTransform(transformStamped);
+                    }
+                    break;
             }
 #else
-            if (is_highfreq) {
-                odom_highfreq_publisher_.publish(msg);
-            } else {
-                odom_publisher_.publish(msg);
+            switch(odom_type) {
+                case OdometryType::STANDARD:
+                    {
+                    geometry_msgs::TransformStamped transformStamped;
+                    transformStamped.header.stamp = msg.header.stamp;
+                    transformStamped.header.frame_id = "odom";
+                    transformStamped.child_frame_id = "odin1_base_link";
+                    transformStamped.transform.translation.x = msg.pose.pose.position.x;
+                    transformStamped.transform.translation.y = msg.pose.pose.position.y;
+                    transformStamped.transform.translation.z = msg.pose.pose.position.z;
+                    transformStamped.transform.rotation.x = msg.pose.pose.orientation.x;
+                    transformStamped.transform.rotation.y = msg.pose.pose.orientation.y;
+                    transformStamped.transform.rotation.z = msg.pose.pose.orientation.z;
+                    transformStamped.transform.rotation.w = msg.pose.pose.orientation.w;
+                    tf_broadcaster->sendTransform(transformStamped);
+                    odom_publisher_.publish(msg);
 
-                if (show_path) {
-                    // Publish odom trajectory as visualization markers (green lines connecting adjacent points)
-                    static visualization_msgs::Marker marker;
-                    static std::vector<geometry_msgs::Point> path_points;
-                    
-                    marker.header = msg.header;
-                    marker.ns = "odom_trajectory";
-                    marker.id = 0;
-                    marker.type = visualization_msgs::Marker::LINE_STRIP;
-                    marker.action = visualization_msgs::Marker::ADD;
-                    marker.pose.orientation.w = 1.0;
-                    marker.scale.x = 0.02;  // Line width
-                    marker.color.r = 0.0;
-                    marker.color.g = 1.0;
-                    marker.color.b = 0.0;
-                    marker.color.a = 1.0;
-
-                    geometry_msgs::Point pt;
-                    pt.x = msg.pose.pose.position.x;
-                    pt.y = msg.pose.pose.position.y;
-                    pt.z = msg.pose.pose.position.z;
-                    path_points.push_back(pt);
-                    
-                    // Keep only recent points to avoid memory issues (e.g., last 1000 points)
-                    if (path_points.size() > 30000) {
-                        path_points.erase(path_points.begin());
-                    }
-                    
-                    marker.points = path_points;
-
-                    // Publish marker array
-                    static visualization_msgs::MarkerArray marker_array;
-                    marker_array.markers.clear();  // Clear previous markers
-                    marker_array.markers.push_back(marker);
-                    path_publisher_.publish(marker_array);
-                }
-
-                if (show_camerapose) {
-                    // camera pose visualization (ROS1)
-                    Eigen::Vector3d P(msg.pose.pose.position.x,
-                                    msg.pose.pose.position.y,
-                                    msg.pose.pose.position.z);
-                    Eigen::Quaterniond R(msg.pose.pose.orientation.w,
-                                        msg.pose.pose.orientation.x,
-                                        msg.pose.pose.orientation.y,
-                                        msg.pose.pose.orientation.z);
+                    if (show_path) {
+                        // Publish odom trajectory as visualization markers (green lines connecting adjacent points)
+                        static visualization_msgs::Marker marker;
+                        static std::vector<geometry_msgs::Point> path_points;
                         
-                    if (extrinsic_ok_) {
-                        P = P + R * t_ic_;
-                        R = R * R_ic_;
+                        marker.header = msg.header;
+                        marker.ns = "odom_trajectory";
+                        marker.id = 0;
+                        marker.type = visualization_msgs::Marker::LINE_STRIP;
+                        marker.action = visualization_msgs::Marker::ADD;
+                        marker.pose.orientation.w = 1.0;
+                        marker.scale.x = 0.02;  // Line width
+                        marker.color.r = 0.0;
+                        marker.color.g = 1.0;
+                        marker.color.b = 0.0;
+                        marker.color.a = 1.0;
+
+                        geometry_msgs::Point pt;
+                        pt.x = msg.pose.pose.position.x;
+                        pt.y = msg.pose.pose.position.y;
+                        pt.z = msg.pose.pose.position.z;
+                        path_points.push_back(pt);
+                        
+                        // Keep only recent points to avoid memory issues (e.g., last 1000 points)
+                        if (path_points.size() > 30000) {
+                            path_points.erase(path_points.begin());
+                        }
+                        
+                        marker.points = path_points;
+
+                        // Publish marker array
+                        static visualization_msgs::MarkerArray marker_array;
+                        marker_array.markers.clear();  // Clear previous markers
+                        marker_array.markers.push_back(marker);
+                        path_publisher_.publish(marker_array);
                     }
-                    cameraposevisual_.reset();
-                    cameraposevisual_.add_pose(P, R);
-                    cameraposevisual_.publish_by(pub_camera_pose_visual_, msg.header);
-                }
+
+                    if (show_camerapose) {
+                        // camera pose visualization (ROS1)
+                        Eigen::Vector3d P(msg.pose.pose.position.x,
+                                        msg.pose.pose.position.y,
+                                        msg.pose.pose.position.z);
+                        Eigen::Quaterniond R(msg.pose.pose.orientation.w,
+                                            msg.pose.pose.orientation.x,
+                                            msg.pose.pose.orientation.y,
+                                            msg.pose.pose.orientation.z);
+                            
+                        if (extrinsic_ok_) {
+                            P = P + R * t_ic_;
+                            R = R * R_ic_;
+                        }
+                        cameraposevisual_.reset();
+                        cameraposevisual_.add_pose(P, R);
+                        cameraposevisual_.publish_by(pub_camera_pose_visual_, msg.header);
+                    }
+                    }
+                    break;
+                case OdometryType::HIGHFREQ:
+                    odom_highfreq_publisher_.publish(msg);
+                    break;
+                case OdometryType::TRANSFORM:
+                    {
+                    geometry_msgs::TransformStamped transformStamped;
+                    transformStamped.header.stamp = msg.header.stamp;
+                    transformStamped.header.frame_id = "odom";
+                    transformStamped.child_frame_id = "map";
+                    transformStamped.transform.translation.x = msg.pose.pose.position.x;
+                    transformStamped.transform.translation.y = msg.pose.pose.position.y;
+                    transformStamped.transform.translation.z = msg.pose.pose.position.z;
+                    transformStamped.transform.rotation.x = msg.pose.pose.orientation.x;
+                    transformStamped.transform.rotation.y = msg.pose.pose.orientation.y;
+                    transformStamped.transform.rotation.z = msg.pose.pose.orientation.z;
+                    transformStamped.transform.rotation.w = msg.pose.pose.orientation.w;
+                    tf_broadcaster->sendTransform(transformStamped);
+                    }
+                    break;
             }
 #endif
     }
@@ -1436,18 +1512,23 @@ private:
 
     void initialize_publishers() {
         #ifdef ROS2
-            imu_pub_ = node_->create_publisher<ros::Imu>("odin1/imu", 10);
-            rgb_pub_ = node_->create_publisher<ros::Image>("odin1/image", 10);
-            cloud_pub_ = node_->create_publisher<ros::PointCloud2>("odin1/cloud_raw", 10);
-            xyzrgbacloud_pub_ = node_->create_publisher<ros::PointCloud2>("odin1/cloud_slam", 10);
-            odom_publisher_ = node_->create_publisher<ros::Odometry>("odin1/odometry", 10);
-            odom_highfreq_publisher_ = node_->create_publisher<ros::Odometry>("odin1/odometry_highfreq", 10);
-            path_publisher_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>("odin1/path", 10);
-            pub_camera_pose_visual_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>("odin1/camera_pose_visual", 10);
-            rgbcloud_pub_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("odin1/cloud_render", 10);
-            compressed_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::CompressedImage>("odin1/image/compressed", 10);
-            undistort_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::Image>("odin1/image/undistorted", 10);
-            intensity_gray_pub_ = node_->create_publisher<sensor_msgs::msg::Image>("odin1/image/intensity_gray", 10);
+            auto qos_profile = rclcpp::QoS(1)
+                                    .reliability(RMW_QOS_POLICY_RELIABILITY_RELIABLE)
+                                    .durability(RMW_QOS_POLICY_DURABILITY_VOLATILE);
+
+            imu_pub_ = node_->create_publisher<ros::Imu>("odin1/imu", qos_profile);
+            rgb_pub_ = node_->create_publisher<ros::Image>("odin1/image", qos_profile);
+            cloud_pub_ = node_->create_publisher<ros::PointCloud2>("odin1/cloud_raw", qos_profile);
+            xyzrgbacloud_pub_ = node_->create_publisher<ros::PointCloud2>("odin1/cloud_slam", qos_profile);
+            odom_publisher_ = node_->create_publisher<ros::Odometry>("odin1/odometry", qos_profile);
+            odom_highfreq_publisher_ = node_->create_publisher<ros::Odometry>("odin1/odometry_highfreq", qos_profile);
+            path_publisher_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>("odin1/path", qos_profile);
+            pub_camera_pose_visual_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>("odin1/camera_pose_visual", qos_profile);
+            rgbcloud_pub_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("odin1/cloud_render", qos_profile);
+            compressed_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::CompressedImage>("odin1/image/compressed", qos_profile);
+            undistort_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::Image>("odin1/image/undistorted", qos_profile);
+            intensity_gray_pub_ = node_->create_publisher<sensor_msgs::msg::Image>("odin1/image/intensity_gray", qos_profile);
+            tf_broadcaster = std::make_unique<tf2_ros::TransformBroadcaster>(node_);
         #endif
     }
     #ifdef ROS1
@@ -1464,6 +1545,7 @@ private:
             compressed_rgb_pub_ = nh.advertise<sensor_msgs::CompressedImage>("odin1/image/compressed", 10);
             undistort_rgb_pub_ = nh.advertise<sensor_msgs::Image>("odin1/image/undistorted", 10);
             intensity_gray_pub_ = nh.advertise<sensor_msgs::Image>("odin1/image/intensity_gray", 10);
+            tf_broadcaster = std::make_unique<tf2_ros::TransformBroadcaster>();
         }
     #endif
 
@@ -1484,6 +1566,7 @@ private:
         rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr intensity_gray_pub_;
         rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_camera_pose_visual_;
         camera_pose_visualization cameraposevisual_;
+        std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster;
     #else
         ros::Publisher imu_pub_;
         ros::Publisher rgb_pub_;
@@ -1500,6 +1583,7 @@ private:
         ros::Publisher compressed_rgb_pub_; // New compressed image publisher
         ros::Publisher undistort_rgb_pub_;
         ros::Publisher intensity_gray_pub_;
+        std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster;
     #endif
 };
 

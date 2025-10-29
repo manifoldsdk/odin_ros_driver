@@ -37,6 +37,7 @@ limitations under the License.
 #include <array>
 // #include <yaml-cpp/yaml.h>
 #include <iomanip>
+#include <sstream>
 #ifdef ROS2
     #include <ament_index_cpp/get_package_share_directory.hpp>
     #include <rclcpp/rclcpp.hpp>
@@ -44,7 +45,7 @@ limitations under the License.
     #include <ros/package.h>
     #include <ros/ros.h> 
 #endif
-#define ros_driver_version "0.5.2"
+#define ros_driver_version "0.6.0"
 // Global variable declarations
 static device_handle odinDevice = nullptr;
 static std::atomic<bool> deviceConnected(false);
@@ -52,14 +53,22 @@ static std::atomic<bool> deviceDisconnected(false);  // Device disconnection fla
 static std::mutex device_mutex;                      // Device operation mutex lock
 static std::atomic<bool> g_connection_timeout(false);
 static std::atomic<bool> g_usb_version_error(false);
+static std::atomic<bool> g_shutdown_requested(false);  // Signal handler flag
 #ifdef ROS2
     std::shared_ptr<MultiSensorPublisher> g_ros_object = nullptr;
 #else
     MultiSensorPublisher* g_ros_object = nullptr;
 #endif
 
-int g_log_level = LOG_LEVEL_INFO;  
+int g_log_level = LOG_LEVEL_INFO;
 int g_show_fps = 0;  // FPS display toggle control
+
+// Custom parameter monitoring
+static std::atomic<bool> g_param_monitor_running(false);
+static std::thread g_param_monitor_thread;
+
+// Command file monitoring
+static std::string g_command_file_path = "";
 
 static std::mutex g_rgb_mutex;
 static std::shared_ptr<cv::Mat> g_latest_bgr;
@@ -69,6 +78,7 @@ static capture_Image_List_t g_latest_rgb;
 static bool g_renderer_initialized = false;
 static std::shared_ptr<rawCloudRender> g_renderer = nullptr;
 std::string calib_file_ = "";
+static std::shared_ptr<odin_ros_driver::YamlParser> g_parser = nullptr;
 
  // usb device
 static std::string TARGET_VENDOR = "2207";
@@ -89,8 +99,18 @@ int g_show_path = 0;
 int g_show_camerapose = 0;
 
 std::filesystem::path log_root_dir_;
+int g_custom_map_mode = 0;
+
+std::string g_relocalization_map_abs_path = "";
+std::string g_mapping_result_dest_dir = "";
+std::string g_mapping_result_file_name = "";
+
 const char* DEV_STATUS_CSV_FILE = "dev_status.csv";
 FILE* dev_status_csv_file = nullptr;
+
+std::filesystem::path map_root_dir_;
+
+char driver_start_time[32];
 
 typedef struct  {
     struct timespec start = {0, 0};
@@ -205,6 +225,240 @@ void collect_children(pid_t pid, std::vector<pid_t>& all) {
 }
 
 void clear_all_queues();
+
+static bool convert_calib_to_cam_in_ex(const std::string& calib_path, const std::filesystem::path& out_path);
+
+// Signal handler for Ctrl+C
+static void signal_handler(int signum) {
+    if (signum == SIGINT || signum == SIGTERM) {
+        #ifdef ROS2
+            RCLCPP_INFO(rclcpp::get_logger("signal_handler"), "Received signal %d, shutting down...", signum);
+        #else
+            ROS_INFO("Received signal %d, shutting down...", signum);
+        #endif
+
+        g_shutdown_requested = true;
+
+        // Stop custom parameter monitoring thread
+        g_param_monitor_running = false;
+        if (g_param_monitor_thread.joinable()) {
+            g_param_monitor_thread.join();
+        }
+
+        // Close device
+        if (odinDevice) {
+            // Convert calib.yaml to cam_in_ex.txt at program end
+            if (g_ros_object) {
+                const std::filesystem::path out_path = g_ros_object->get_root_dir() / "image" / "cam_in_ex.txt";
+                (void)convert_calib_to_cam_in_ex(calib_file_, out_path);
+
+                #ifdef ROS2
+                    RCLCPP_INFO(rclcpp::get_logger("device_cb"), "pose_index: %d", g_ros_object->get_pose_index());
+                    RCLCPP_INFO(rclcpp::get_logger("device_cb"), "cloud_index: %d", g_ros_object->get_cloud_index());
+                    RCLCPP_INFO(rclcpp::get_logger("device_cb"), "image_index: %d", g_ros_object->get_image_index());
+                #else
+                    ROS_INFO("pose_index: %d", g_ros_object->get_pose_index());
+                    ROS_INFO("cloud_index: %d", g_ros_object->get_cloud_index());
+                    ROS_INFO("image_index: %d", g_ros_object->get_image_index());
+                #endif
+            }
+
+            #ifdef ROS2
+                RCLCPP_INFO(rclcpp::get_logger("signal_handler"), "Closing device...");
+            #else
+                ROS_INFO("Closing device...");
+            #endif
+
+            if (lidar_stop_stream(odinDevice, LIDAR_MODE_SLAM))
+            {
+                #ifdef ROS2
+                    RCLCPP_INFO(rclcpp::get_logger("device_cb"), "lidar_stop_stream failed");
+                #else
+                    ROS_INFO("lidar_stop_stream failed");
+                #endif
+            }
+            odinDevice = nullptr;
+        }
+
+        // Deinitialize lidar system
+        #ifdef ROS2
+            RCLCPP_INFO(rclcpp::get_logger("signal_handler"), "Deinitializing lidar system...");
+        #else
+            ROS_INFO("Deinitializing lidar system...");
+        #endif
+        lidar_system_deinit();
+
+        // Close CSV file
+        if (dev_status_csv_file) {
+            std::fflush(dev_status_csv_file);
+            fclose(dev_status_csv_file);
+            dev_status_csv_file = nullptr;
+        }
+
+        // Shutdown ROS
+        #ifdef ROS2
+            rclcpp::shutdown();
+        #else
+            ros::shutdown();
+        #endif
+
+        exit(0);
+    }
+}
+
+// Custom parameter monitoring function
+static void custom_parameter_monitor() {
+    int last_save_map_val = -1;
+    while (g_param_monitor_running && deviceConnected) {
+        if (odinDevice) {
+            if (g_custom_map_mode == 1) {
+                int value = 0;
+                int result = lidar_get_custom_parameter(odinDevice, "save_map", &value);
+
+                if (result == 0) {
+                    // #ifdef ROS2
+                    //     RCLCPP_INFO(rclcpp::get_logger("param_monitor"), "save_map = %d", value);
+                    // #else
+                    //     ROS_INFO("save_map = %d", value);
+                    // #endif
+
+                    if (last_save_map_val == 1 && value == 0) {
+                        auto now = std::chrono::system_clock::now();
+                        std::time_t t = std::chrono::system_clock::to_time_t(now);
+                        std::tm tm{};
+                        #ifdef _WIN32
+                            localtime_s(&tm, &t);
+                        #else
+                            localtime_r(&t, &tm);
+                        #endif
+                        char map_save_time[32];
+                        std::strftime(map_save_time, sizeof(map_save_time), "%Y%m%d_%H%M%S", &tm);
+
+                        std::string map_dir = g_mapping_result_dest_dir != "" ? g_mapping_result_dest_dir : map_root_dir_.string();
+                        std::string map_name = g_mapping_result_file_name != "" ? g_mapping_result_file_name : "map_" + std::string(map_save_time) + ".bin";
+                        #ifdef ROS2
+                            RCLCPP_INFO(rclcpp::get_logger("param_monitor"), "Map is saved on device, now transfering to [%s/%s]", map_dir.c_str(), map_name.c_str());
+                        #else
+                            ROS_INFO("Map is saved on device, now transfering to [%s/%s]", map_dir.c_str(), map_name.c_str());
+                        #endif
+                        int ret = lidar_get_mapping_result(odinDevice, map_dir.c_str(), map_name.c_str());
+                        if (ret < 0 ) {
+                            #ifdef ROS2
+                                RCLCPP_WARN(rclcpp::get_logger("param_monitor"), "Failed to get mapping result");
+                            #else
+                                ROS_WARN("Failed to get mapping result");
+                            #endif
+                        } else if (ret == 0) {
+                            #ifdef ROS2
+                                RCLCPP_INFO(rclcpp::get_logger("param_monitor"), "map get success");
+                            #else
+                                ROS_INFO("map get success");
+                            #endif
+                        } else {
+                            #ifdef ROS2
+                                RCLCPP_WARN(rclcpp::get_logger("param_monitor"), "Failed to get mapping result, error code: %d", ret);
+                            #else
+                                ROS_WARN("Failed to get mapping result, error code: %d", ret);
+                            #endif
+                        }
+                    }
+                    last_save_map_val = value;
+
+                } else {
+                    #ifdef ROS2
+                        RCLCPP_WARN(rclcpp::get_logger("param_monitor"),
+                                   "Failed to get save_map parameter, error: %d", result);
+                    #else
+                        ROS_WARN("Failed to get save_map parameter, error: %d", result);
+                    #endif
+                }
+            }
+        }
+
+        // Sleep for 1 second (1Hz)
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+}
+
+// Process command from file
+static void process_command_file() {
+    if (!std::filesystem::exists(g_command_file_path)) {
+        return;
+    }
+    
+    std::ifstream file(g_command_file_path);
+    if (!file.is_open()) {
+        return;
+    }
+    
+    std::string line;
+    if (std::getline(file, line)) {
+        file.close();
+        
+        // Delete the command file after reading
+        std::filesystem::remove(g_command_file_path);
+        
+        if (line.empty()) return;
+        
+        std::istringstream iss(line);
+        std::string command, param_name, value_str;
+        
+        if (!(iss >> command >> param_name >> value_str)) {
+            #ifdef ROS2
+                RCLCPP_WARN(rclcpp::get_logger("command_processor"), "Invalid command format. Usage: set <parameter_name> <value>");
+            #else
+                ROS_WARN("Invalid command format. Usage: set <parameter_name> <value>");
+            #endif
+            return;
+        }
+        
+        if (command == "set") {
+            if (!deviceConnected || !odinDevice) {
+                #ifdef ROS2
+                    RCLCPP_WARN(rclcpp::get_logger("command_processor"), "Device not connected!");
+                #else
+                    ROS_WARN("Device not connected!");
+                #endif
+                return;
+            }
+            
+            try {
+                int value = std::stoi(value_str);
+                int result = lidar_set_custom_parameter(odinDevice, param_name.c_str(), &value, sizeof(int));
+
+                if (result == 0) {
+                    #ifdef ROS2
+                        RCLCPP_INFO(rclcpp::get_logger("command_processor"), 
+                                   "Successfully set %s = %d", param_name.c_str(), value);
+                    #else
+                        ROS_INFO("Successfully set %s = %d", param_name.c_str(), value);
+                    #endif
+                } else {
+                    #ifdef ROS2
+                        RCLCPP_ERROR(rclcpp::get_logger("command_processor"), 
+                                    "Failed to set %s = %d, error: %d", param_name.c_str(), value, result);
+                    #else
+                        ROS_ERROR("Failed to set %s = %d, error: %d", param_name.c_str(), value, result);
+                    #endif
+                }
+            } catch (const std::exception& e) {
+                #ifdef ROS2
+                    RCLCPP_ERROR(rclcpp::get_logger("command_processor"), "Invalid value: %s", value_str.c_str());
+                #else
+                    ROS_ERROR("Invalid value: %s", value_str.c_str());
+                #endif
+            }
+        } else {
+            #ifdef ROS2
+                RCLCPP_WARN(rclcpp::get_logger("command_processor"), "Unknown command: %s", command.c_str());
+            #else
+                ROS_WARN("Unknown command: %s", command.c_str());
+            #endif
+        }
+    } else {
+        file.close();
+    }
+}
 
 // detect USB3.0
 bool isUsb3OrHigher(const std::string& vendorId, const std::string& productId) {
@@ -510,7 +764,7 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
             break;
         case LIDAR_DT_SLAM_ODOMETRY:
             if (g_sendodom) {
-                g_ros_object->publishOdometry((capture_Image_List_t *)&data->stream, false, g_show_path, g_show_camerapose);
+                g_ros_object->publishOdometry((capture_Image_List_t *)&data->stream, OdometryType::STANDARD, g_show_path, g_show_camerapose);
             }
             update_count(&slam_odom_rx_fps);
             break;
@@ -667,9 +921,14 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
             case LIDAR_DT_SLAM_ODOMETRY_HIGHFREQ:
             {
                 if (g_sendodom) {
-                    g_ros_object->publishOdometry((capture_Image_List_t *)&data->stream, true, false, false);
+                    g_ros_object->publishOdometry((capture_Image_List_t *)&data->stream, OdometryType::HIGHFREQ, false, false);
                 }
                 update_count(&slam_odom_highfreq_rx_fps);
+            }
+            break;
+            case LIDAR_DT_SLAM_ODOMETRY_TF:
+            {
+                g_ros_object->publishOdometry((capture_Image_List_t *)&data->stream, OdometryType::TRANSFORM, false, false);
             }
             break;
         default:
@@ -845,6 +1104,42 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             odinDevice = nullptr;
             return;
         }
+
+        // Apply custom parameters after setting mode
+        if (g_parser && !g_parser->applyCustomParameters(odinDevice)) {
+            #ifdef ROS2
+                RCLCPP_WARN(rclcpp::get_logger("device_cb"), "Some custom parameters failed to apply");
+            #else
+                ROS_WARN("Some custom parameters failed to apply");
+            #endif
+        }
+
+        #ifdef ROS2
+            RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Custom map mode: %d", g_custom_map_mode);
+        #else
+            ROS_INFO("Custom map mode: %d", g_custom_map_mode);
+        #endif
+
+        if (g_custom_map_mode == 2) {
+            if (g_relocalization_map_abs_path != "" && std::filesystem::exists(g_relocalization_map_abs_path) && 
+                lidar_set_relocalization_map(odinDevice, g_relocalization_map_abs_path.c_str()) == 0) {
+                #ifdef ROS2
+                    RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Relocalization map set successfully");
+                #else
+                    ROS_INFO("Relocalization map set successfully");
+                #endif
+            } else {
+                #ifdef ROS2
+                    RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Relocalization map path set fail");
+                #else
+                    ROS_ERROR("Relocalization map path set fail");
+                #endif
+                lidar_close_device(odinDevice);
+                lidar_destory_device(odinDevice);
+                odinDevice = nullptr;
+                return;
+            }
+        }
  
         lidar_data_callback_info_t data_callback_info;
         data_callback_info.data_callback = lidar_data_callback;
@@ -937,7 +1232,18 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         
         software_connect_timing = false;
         deviceConnected = true;
-        deviceDisconnected = false; 
+        deviceDisconnected = false;
+        
+        // Start custom parameter monitoring thread
+        g_param_monitor_running = true;
+        g_param_monitor_thread = std::thread(custom_parameter_monitor);
+        
+        #ifdef ROS2
+            RCLCPP_INFO(rclcpp::get_logger("device_cb"),
+                       "Command interface ready. Use: echo 'set save_map 1' > %s", g_command_file_path.c_str());
+        #else
+            ROS_INFO("Command interface ready. Use: echo 'set save_map 1' > %s", g_command_file_path.c_str());
+        #endif 
         
         bool load_status = g_ros_object->loadCameraParams(calib_config);
         if (g_sendrgb_undistort &&  load_status == 0) {
@@ -962,6 +1268,13 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
 
         deviceConnected = false;
         deviceDisconnected = true;
+        
+        // Stop custom parameter monitoring thread
+        g_param_monitor_running = false;
+        if (g_param_monitor_thread.joinable()) {
+            g_param_monitor_thread.join();
+        }
+        
 
         clear_all_queues();
 
@@ -991,6 +1304,10 @@ int main(int argc, char *argv[])
     g_ros_object = new MultiSensorPublisher(nh);
 #endif
 
+    // Register signal handlers for Ctrl+C
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+
     try {
     #ifdef ROS2
         std::string package_path = get_package_source_directory();
@@ -998,10 +1315,20 @@ int main(int argc, char *argv[])
     #else
     	std::string package_path = get_package_share_path("odin_ros_driver");
     #endif
-        std::string config_file = package_path + "/config/control_command.yaml";   
-      
-        odin_ros_driver::YamlParser parser(config_file);
-        if (!parser.loadConfig()) {
+        std::string config_dir = package_path + "/config";
+        std::string config_file = config_dir + "/control_command.yaml";
+
+        // Initialize command file path to /tmp/odin_command.txt
+        g_command_file_path = "/tmp/odin_command.txt";
+
+        #ifdef ROS2
+            RCLCPP_INFO(rclcpp::get_logger("init"), "Command file path set to: %s", g_command_file_path.c_str());
+        #else
+            ROS_INFO("Command file path set to: %s", g_command_file_path.c_str());
+        #endif
+
+        g_parser = std::make_shared<odin_ros_driver::YamlParser>(config_file);
+        if (!g_parser->loadConfig()) {
             #ifdef ROS2
                 RCLCPP_ERROR(node->get_logger(), "Failed to load config file: %s", config_file.c_str());
             #else
@@ -1010,8 +1337,9 @@ int main(int argc, char *argv[])
             return -1;
         }
 
-        auto keys = parser.getRegisterKeys();
-        parser.printConfig();
+        auto keys = g_parser->getRegisterKeys();
+        auto keys_w_str_val = g_parser->getRegisterKeysStrVal();
+        g_parser->printConfig();
 
         auto get_key_value = [&](const std::string& key, int default_value) -> int {
             auto it = keys.find(key);
@@ -1033,50 +1361,72 @@ int main(int argc, char *argv[])
         g_show_path = get_key_value("showpath", 0);
         g_show_camerapose = get_key_value("showcamerapose", 0);
         g_log_level = get_key_value("log_devel", LOG_LEVEL_INFO);
+
+        auto get_key_str_value = [&](const std::string& key, const std::string& default_value) -> std::string {
+            auto it = keys_w_str_val.find(key);
+            return it != keys_w_str_val.end() ? it->second : default_value;
+        };
+
+        g_relocalization_map_abs_path = get_key_str_value("relocalization_map_abs_path", "");
+        g_mapping_result_dest_dir = get_key_str_value("mapping_result_dest_dir", "");
+        g_mapping_result_file_name = get_key_str_value("mapping_result_file_name", "");
+
+        g_custom_map_mode = g_parser->getCustomMapMode(2);
+
         lidar_log_set_level(LIDAR_LOG_INFO);
 
         const std::string package_name = "odin_ros_driver";
         std::string data_dir = "";
         std::string log_dir = "";
+        std::string map_dir = "";
         #ifdef ROS2
             char* ros_workspace = std::getenv("COLCON_PREFIX_PATH");
             if (ros_workspace) {
-            std::string workspace_path(ros_workspace);
-            size_t pos = workspace_path.find("/install");
-            if (pos != std::string::npos) {
-                data_dir = workspace_path.substr(0, pos) + "/src/odin_ros_driver/recorddata";
-                log_dir = workspace_path.substr(0, pos) + "/src/odin_ros_driver/log";
+                std::string workspace_path(ros_workspace);
+                size_t pos = workspace_path.find("/install");
+                if (pos != std::string::npos) {
+                    data_dir = workspace_path.substr(0, pos) + "/src/odin_ros_driver/recorddata";
+                    log_dir = workspace_path.substr(0, pos) + "/src/odin_ros_driver/log";
+                    map_dir = workspace_path.substr(0, pos) + "/src/odin_ros_driver/map";
+                } else {
+                    data_dir = ament_index_cpp::get_package_share_directory(package_name) + "/recorddata";
+                    log_dir = ament_index_cpp::get_package_share_directory(package_name) + "/log";
+                    map_dir = ament_index_cpp::get_package_share_directory(package_name) + "/map";
+                }
             } else {
                 data_dir = ament_index_cpp::get_package_share_directory(package_name) + "/recorddata";
                 log_dir = ament_index_cpp::get_package_share_directory(package_name) + "/log";
-            }
-            } else {
-            data_dir = ament_index_cpp::get_package_share_directory(package_name) + "/recorddata";
-            log_dir = ament_index_cpp::get_package_share_directory(package_name) + "/log";
+                map_dir = ament_index_cpp::get_package_share_directory(package_name) + "/map";
             }
         #else
             data_dir = ros::package::getPath(package_name) + "/recorddata";
             log_dir = ros::package::getPath(package_name) + "/log";
+            map_dir = ros::package::getPath(package_name) + "/map";
         #endif
 
         if (g_record_data) {
             g_ros_object->initialize_data_logger(data_dir);
         }
 
+        auto now = std::chrono::system_clock::now();
+        std::time_t t = std::chrono::system_clock::to_time_t(now);
+        std::tm tm{};
+        #ifdef _WIN32
+            localtime_s(&tm, &t);
+        #else
+            localtime_r(&t, &tm);
+        #endif
+        std::strftime(driver_start_time, sizeof(driver_start_time), "%Y%m%d_%H%M%S", &tm);
+
         if (g_devstatus_log) {
-            auto now = std::chrono::system_clock::now();
-            std::time_t t = std::chrono::system_clock::to_time_t(now);
-            std::tm tm{};
-            #ifdef _WIN32
-                localtime_s(&tm, &t);
-            #else
-                localtime_r(&t, &tm);
-            #endif
-            char buf[32];
-            std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &tm);
-            std::string folder_name = std::string("Driver_") + std::string(buf);
+            std::string folder_name = std::string("Driver_") + std::string(driver_start_time);
             log_root_dir_ = std::filesystem::path(log_dir) / folder_name;
             std::filesystem::create_directories(log_root_dir_);
+        }
+
+        if (g_custom_map_mode == 1 && g_mapping_result_dest_dir == "") {
+            map_root_dir_ = std::filesystem::path(map_dir) / driver_start_time;
+            std::filesystem::create_directories(map_root_dir_);
         }
 
         if (lidar_system_init(lidar_device_callback)) {
@@ -1178,6 +1528,12 @@ int main(int argc, char *argv[])
             if (g_sendcloudrender) {
                 g_ros_object->try_process_pair();  
             }
+            
+            // Check for command file
+            if (deviceConnected) {
+                process_command_file();
+            }
+            
             disconnect_msg_printed = false;
 
             // Wait 0.1 seconds
@@ -1206,6 +1562,12 @@ int main(int argc, char *argv[])
             if (g_sendcloudrender) {
                 g_ros_object->try_process_pair();  
             }
+            
+            // Check for command file
+            if (deviceConnected) {
+                process_command_file();
+            }
+            
             disconnect_msg_printed = false;
 
             // Wait 0.1 seconds
@@ -1257,6 +1619,14 @@ int main(int argc, char *argv[])
             dev_status_csv_file = nullptr;
         }
     }
+    
+    // Stop custom parameter monitoring thread on exit
+    g_param_monitor_running = false;
+    if (g_param_monitor_thread.joinable()) {
+        g_param_monitor_thread.join();
+    }
+    
+    
     // lidar_system_deinit();
 
 

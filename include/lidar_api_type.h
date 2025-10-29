@@ -47,14 +47,15 @@ typedef enum {
 } lidar_mode_e;
 
 typedef enum {
-    LIDAR_DT_NONE               = 0,
-    LIDAR_DT_RAW_RGB            = 1 << 1,
-    LIDAR_DT_RAW_IMU            = 1 << 2,
-    LIDAR_DT_RAW_DTOF           = 1 << 3,
-    LIDAR_DT_SLAM_CLOUD         = 1 << 4,
-    LIDAR_DT_SLAM_ODOMETRY      = 1 << 5,
-    LIDAR_DT_DEV_STATUS         = 1 << 6,
-    LIDAR_DT_SLAM_ODOMETRY_HIGHFREQ = 1 << 7,
+    LIDAR_DT_NONE = 0,
+    LIDAR_DT_RAW_RGB,
+    LIDAR_DT_RAW_IMU,
+    LIDAR_DT_RAW_DTOF,
+    LIDAR_DT_SLAM_CLOUD,
+    LIDAR_DT_SLAM_ODOMETRY,
+    LIDAR_DT_DEV_STATUS,
+    LIDAR_DT_SLAM_ODOMETRY_HIGHFREQ,
+    LIDAR_DT_SLAM_ODOMETRY_TF,
 } lidar_data_type_e;
 
 typedef struct {

@@ -142,6 +142,7 @@ if(ROS_VERSION STREQUAL "ROS1")
         sensor_msgs
         nav_msgs
         cv_bridge
+        tf
         image_transport
     )
     
@@ -224,6 +225,10 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     find_package(image_transport REQUIRED)
     find_package(pcl_conversions REQUIRED)
     find_package(message_filters REQUIRED)
+    find_package(tf2 REQUIRED)
+    find_package(tf2_ros REQUIRED)
+    find_package(geometry_msgs REQUIRED)
+    find_package(tf2_geometry_msgs REQUIRED)
     
     # Create executable
     add_executable(host_sdk_sample 
@@ -235,9 +240,8 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     
     # Link libraries
     target_link_libraries(host_sdk_sample
-        ${catkin_LIBRARIES}
         ${COMMON_LIBS}
-        yaml-cpp 
+        yaml-cpp
         usb-1.0
     )
     
@@ -250,9 +254,12 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         visualization_msgs
         cv_bridge
         image_transport
+        tf2
+        tf2_ros
+        geometry_msgs
+        tf2_geometry_msgs
     )
     
-
     add_library(pointcloud_depth_converter_ros2 src/pointcloud_depth_converter.cpp)
     target_link_libraries(pointcloud_depth_converter_ros2
         ${OpenCV_LIBS}
@@ -348,6 +355,10 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         image_transport
         pcl_conversions
         message_filters
+        tf2
+        tf2_ros
+        geometry_msgs
+        tf2_geometry_msgs
     )
     
     ament_package()

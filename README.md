@@ -16,7 +16,7 @@ This driver package provides core functionality for point cloud SLAM application
 
 ## 1. Version
 
-Current Version: v0.5.2
+Current Version: v0.6.0
 
 ## 2. Preparation
 
@@ -149,6 +149,37 @@ ROS2 Demo Launch Instructions:
 ```shell
 ros2 launch odin_ros_driver odin1_ros2.launch.py
 ```
+
+### 3.5 Operation Mode:
+
+The operation mode can be configured via the `custom_map_mode` parameter in config/control_command.yaml.
+
+#### Odometry mode
+
+Set `custom_map_mode = 0` to enable odometry mode. In this mode, the map frame and odom frame share the same pose.
+
+#### SLAM mode
+
+Set `custom_map_mode = 1` to enable slam mode. This mode provides a complete SLAM system that builds upon the Odometry Mode by adding **loop closure detection** and **map saving** capabilities.
+
+After launching the driver, odin1 will automatically perform mapping and cache map data. When the scene capture is complete, users need to execute `./set_param.sh save_map 1` in the driver's source directory to save all map data collected since the program started. The map will be saved to the location specified by the `mapping_result_dest_dir` and `mapping_result_file_name` parameters in config/control_command.yaml. If these parameters are not specified, default values will be used.
+
+After the initial save, you can execute the command again to save a new map. Each save operation will generate a new map file. (Please allow at least 5 seconds between consecutive save operations)
+
+The map origin corresponds to the odom coordinate system's origin at the program's startup.
+
+##### Relocalization mode
+
+To enable relocalization, set `custom_map_mode = 2` and specify the absolute path to the pre-built map using the `relocalization_map_abs_path` parameter in config/control_command.yaml.
+
+Once launched, odin1 will initiate the relocalization process based on the current viewpoint and the specified map. To ensure a high success rate, it is recommended to starting within 1 meter ±10 degrees of the original position and orientation from the SLAM trajectory.
+
+Note that relocalization performance is highly environment-dependent. In highly distinctive scenes, successful matching may occur even beyond the 1m/10° range, while other environments may require more stringent conditions. We advise testing in your target environment to determine practical tolerances.
+
+If relocalization fails initially, the system will temporarily operate in a fallback SLAM mode (map saving is disabled in this state). During this time, you can freely move odin1. It will continue relocalization attempts in the background. Once successful, the TF between map and odom frames will be published. (Tip: Gently shaking or moving the device after initialization can help improve relocalization accuracy.)
+
+The following topics are published in the odom frame: `/odin1/cloud_slam, /odin1/odom, /odin1/highodom and /odin1/path`. To obtain these in the map frame, apply the TF from odom frame to map frame.
+
 ## 4. File structure and data format
 ### 4.1 File structure
 ```shell
@@ -216,6 +247,8 @@ Internal parameters of the Odin ROS driver are defined in config/control_command
 | odin1/cloud_slam              | sendcloudslam     | Slam_PointCloud Topic |
 | odin1/odometry                | sendodom          | Odom Topic |
 | odin1/odometry_high           | sendodom          | high frequency Odom Topic |
+| odin1/path                    | showpath          | Odom Path Topic |
+| tf                            | sendodom          | tf tree Topic |
 | odin1/depth_img_competetion   | senddepth         | Dense depth image Topic. Demo, high computing power required. One-to-one with odin1/image_undistort. To utilize the data please directly subscribe to this topic instead of echoing it. Original value is already depth data, no need for further convert. |
 | odin1/depth_img_competetion_cloud  | senddepth         | Dense Depth_Cloud Topic. Demo, high computing power required |
 
@@ -275,6 +308,11 @@ float32 rgb           // RGB value
 |-----------------------|----------------------|
 | recorddata            | Record data in specific format that can be imported into MindCloud(TM) for post-processing. Please be aware that this will consume a lot of storage space. Testing shows 9.5G for 10mins of data. |
 | devstatuslog          | Device status logging, currently save device status (soc temperature, cpu usage, ram usage, dtof sensor temp .etc) and data tx & rx rate to devstatus.csv under log folder. A new file will be created every time the driver is started. |
+| showcamerapose        | Display Camera Pose and Field of View. |
+| custom_map_mode        | Operation Modes: Mode 0 - Odometry mode: The map frame and odom frame share the same pose. Mode 1 - Mapping (with loop closure) mode: This mode supports map saving. Mode 2 - Relocalization mode: Requires specifying the absolute path to the map file. After successful relocalization, it will output the TF relationship between the map and odom frames.|
+| custom_init_pos        | Initialization Position (currently unused). |
+| relocalization_map_abs_path        | Absolute Path to Map File: Used for relocalization mode. |
+| mapping_result_dest_dir and mapping_result_file_name| Path and Name for Saving Maps in Mapping Mode: If not specified, default values will be used. |
 
 ## 5. FAQ
 ### 5.1 Segmentation fault upon re-launching host SDK

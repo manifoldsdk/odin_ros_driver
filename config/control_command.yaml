@@ -14,3 +14,9 @@ register_keys:
   pubintensitygray: 0   # 0: off; 1: on
   showpath: 0           # 0: off; 1: on
   showcamerapose: 0     # 0: off; 1: on
+  custom_save_map: 0
+  custom_map_mode: 0    # 0: Odometry mode 1: SLAM mode 2: Relocalization mode
+  custom_init_pos: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+  relocalization_map_abs_path: "" # must be set or will fail
+  mapping_result_dest_dir: "" # "": use default value; other: use custom value
+  mapping_result_file_name: "" # "": use default value; other: use custom value
