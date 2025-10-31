@@ -1,22 +1,23 @@
 register_keys:
-  streamctrl: 1         # 0: off; 1: on
-  sendrgb: 1            # 0: off; 1: on
-  sendimu: 1            # 0: off; 1: on
-  sendodom: 1           # 0: off; 1: on
-  senddtof: 1           # 0: off; 1: on
-  sendcloudslam: 1      # 0: off; 1: on
-  sendcloudrender: 1    # 0: off; 1: on
-  sendrgbcompressed: 1  # 0: off; 1: on
-  senddepth: 0          # 0: off; 1: on
-  sendrgbundistort: 0   # 0: off; 1: on
-  recorddata: 0         # 0: off; 1: on
-  devstatuslog: 1       # 0: off; 1: on
-  pubintensitygray: 0   # 0: off; 1: on
-  showpath: 0           # 0: off; 1: on
-  showcamerapose: 0     # 0: off; 1: on
+  strict_usb3.0_check: 0  # 0: off: 1: on; if off, allow connection even if usb connection is below usb 3.0 
+  streamctrl: 1           # 0: off; 1: on
+  sendrgb: 1              # 0: off; 1: on
+  sendimu: 1              # 0: off; 1: on
+  sendodom: 1             # 0: off; 1: on
+  senddtof: 1             # 0: off; 1: on
+  sendcloudslam: 1        # 0: off; 1: on
+  sendcloudrender: 1      # 0: off; 1: on
+  sendrgbcompressed: 1    # 0: off; 1: on
+  senddepth: 0            # 0: off; 1: on
+  sendrgbundistort: 0     # 0: off; 1: on
+  recorddata: 0           # 0: off; 1: on
+  devstatuslog: 1         # 0: off; 1: on
+  pubintensitygray: 0     # 0: off; 1: on
+  showpath: 0             # 0: off; 1: on
+  showcamerapose: 0       # 0: off; 1: on
   custom_save_map: 0
-  custom_map_mode: 0    # 0: Odometry mode 1: SLAM mode 2: Relocalization mode
+  custom_map_mode: 0      # 0: Odometry mode 1: SLAM mode 2: Relocalization mode
   custom_init_pos: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
-  relocalization_map_abs_path: "" # must be set or will fail
+  relocalization_map_abs_path: "" # must be set for Relocalization mode or will fail
   mapping_result_dest_dir: "" # "": use default value; other: use custom value
   mapping_result_file_name: "" # "": use default value; other: use custom value

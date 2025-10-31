@@ -16,7 +16,7 @@ This driver package provides core functionality for point cloud SLAM application
 
 ## 1. Version
 
-Current Version: v0.6.0
+Current Version: v0.6.1
 
 ## 2. Preparation
 
@@ -306,6 +306,7 @@ float32 rgb           // RGB value
 
 |control_command.yaml   | Detailed Description |
 |-----------------------|----------------------|
+| strict_usb3.0_check   | Strict USB3.0 check, if off, allow connection even if usb connection is below usb 3.0 |
 | recorddata            | Record data in specific format that can be imported into MindCloud(TM) for post-processing. Please be aware that this will consume a lot of storage space. Testing shows 9.5G for 10mins of data. |
 | devstatuslog          | Device status logging, currently save device status (soc temperature, cpu usage, ram usage, dtof sensor temp .etc) and data tx & rx rate to devstatus.csv under log folder. A new file will be created every time the driver is started. |
 | showcamerapose        | Display Camera Pose and Field of View. |

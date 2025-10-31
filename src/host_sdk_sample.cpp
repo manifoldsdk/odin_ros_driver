@@ -45,7 +45,7 @@ limitations under the License.
     #include <ros/package.h>
     #include <ros/ros.h> 
 #endif
-#define ros_driver_version "0.6.0"
+#define ros_driver_version "0.6.1"
 // Global variable declarations
 static device_handle odinDevice = nullptr;
 static std::atomic<bool> deviceConnected(false);
@@ -97,6 +97,7 @@ int g_devstatus_log = 0;
 int g_pub_intensity_gray = 0;
 int g_show_path = 0;
 int g_show_camerapose = 0;
+int g_strict_usb3_0_check = 0;
 
 std::filesystem::path log_root_dir_;
 int g_custom_map_mode = 0;
@@ -502,6 +503,14 @@ bool isUsb3OrHigher(const std::string& vendorId, const std::string& productId) {
     #else
         ROS_INFO("Detected USB version: %.1f", version);
     #endif
+    if (!g_strict_usb3_0_check) {
+        #ifdef ROS2
+            RCLCPP_INFO(rclcpp::get_logger("usb_check"), "Strict USB3.0 check disabled");
+        #else
+            ROS_INFO("Strict USB3.0 check disabled");
+        #endif
+        return true;
+    }
     return version >= 3.0;
 }
 
@@ -1361,6 +1370,7 @@ int main(int argc, char *argv[])
         g_show_path = get_key_value("showpath", 0);
         g_show_camerapose = get_key_value("showcamerapose", 0);
         g_log_level = get_key_value("log_devel", LOG_LEVEL_INFO);
+        g_strict_usb3_0_check = get_key_value("strict_usb3.0_check", 1);
 
         auto get_key_str_value = [&](const std::string& key, const std::string& default_value) -> std::string {
             auto it = keys_w_str_val.find(key);
