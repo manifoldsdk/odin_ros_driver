@@ -249,8 +249,8 @@ Internal parameters of the Odin ROS driver are defined in config/control_command
 | odin1/odometry_high           | sendodom          | high frequency Odom Topic |
 | odin1/path                    | showpath          | Odom Path Topic |
 | tf                            | sendodom          | tf tree Topic |
-| odin1/depth_img_competetion   | senddepth         | Dense depth image Topic. Demo, high computing power required. One-to-one with odin1/image_undistort. To utilize the data please directly subscribe to this topic instead of echoing it. Original value is already depth data, no need for further convert. |
-| odin1/depth_img_competetion_cloud  | senddepth         | Dense Depth_Cloud Topic. Demo, high computing power required |
+| odin1/depth_img_completion   | senddepth         | Dense depth image Topic. Demo, high computing power required. One-to-one with odin1/image_undistort. To utilize the data please directly subscribe to this topic instead of echoing it. Original value is already depth data, no need for further convert. |
+| odin1/depth_img_completion_cloud  | senddepth         | Dense Depth_Cloud Topic. Demo, high computing power required |
 
 ### 4.4 Data format
 

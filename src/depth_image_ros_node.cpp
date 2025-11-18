@@ -23,8 +23,8 @@ DepthImageRosNode::DepthImageRosNode(ros::NodeHandle &nh, ros::NodeHandle &pnh)
     pnh_.param<std::string>("cloud_raw_topic", cloud_raw_topic_, std::string("/odin1/cloud_raw"));
     pnh_.param<std::string>("color_raw_topic", color_raw_topic_, std::string("/odin1/image"));
     pnh_.param<std::string>("color_compressed_topic_", color_compressed_topic_, std::string("/odin1/image/compressed"));
-    pnh_.param<std::string>("depth_image_topic", depth_image_topic_, std::string("/odin1/depth_img_competetion"));
-    pnh_.param<std::string>("depth_cloud_topic", depth_cloud_topic_, std::string("/odin1/depth_img_competetion_cloud"));
+    pnh_.param<std::string>("depth_image_topic", depth_image_topic_, std::string("/odin1/depth_img_completion"));
+    pnh_.param<std::string>("depth_cloud_topic", depth_cloud_topic_, std::string("/odin1/depth_img_completion_cloud"));
 
     ROS_INFO_STREAM("\n  cloud_raw_topic: " << cloud_raw_topic_
                 << "\n  color_raw_topic: " << color_raw_topic_

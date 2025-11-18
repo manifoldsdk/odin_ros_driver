@@ -287,7 +287,7 @@ Visualization Manager:
       Displays:
         - Class: rviz/Image
           Enabled: true
-          Image Topic: /odin1/depth_img_competetion
+          Image Topic: /odin1/depth_img_completion
           Max Value: 1
           Median window: 5
           Min Value: 0
@@ -320,7 +320,7 @@ Visualization Manager:
           Size (Pixels): 3
           Size (m): 0.009999999776482582
           Style: Points
-          Topic: /odin1/depth_img_competetion_cloud
+          Topic: /odin1/depth_img_completion_cloud
           Unreliable: false
           Use Fixed Frame: true
           Use rainbow: true
