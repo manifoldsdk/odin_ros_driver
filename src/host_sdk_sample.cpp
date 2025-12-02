@@ -46,7 +46,7 @@ limitations under the License.
     #include <ros/package.h>
     #include <ros/ros.h> 
 #endif
-#define ros_driver_version "0.7.0"
+#define ros_driver_version "0.7.1"
 #define recommended_firmware_version "0.8.0"
 
 // Global variable declarations
@@ -1138,7 +1138,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         }
 
         bool need_open_device = true;
-        bool need_configure_device = true;
+        bool get_calib_file = true;
         switch (device->initial_state) {
             case LIDAR_DEVICE_NOT_INITIALIZED:
                 #ifdef ROS2
@@ -1156,17 +1156,17 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                 #endif
                 break;
             case LIDAR_DEVICE_STREAMING:
-                need_open_device = false;
-                need_configure_device = false;
                 #ifdef ROS2
-                    RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Device state: streaming, skip opening and configuring");
+                    RCLCPP_WARN(rclcpp::get_logger("device_cb"), "Device state: streaming, this should not happen, exitting...");
                 #else
-                    ROS_INFO("Device state: streaming, skip opening and configuring");
+                    ROS_WARN("Device state: streaming, this should not happen, exitting...");
                 #endif
+                system("pkill -f rviz");
+                exit(1);
                 break;
             case LIDAR_DEVICE_STREAM_STOPPED:
                 need_open_device = false;
-                need_configure_device = false;
+                get_calib_file = false;
                 #ifdef ROS2
                     RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Device state: stream stopped, resume streaming");
                 #else
@@ -1197,7 +1197,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         
         std::string calib_config = config_dir + "/calib.yaml";
         calib_file_ = calib_config;
-        if (need_configure_device) {
+        if (get_calib_file) {
             if (lidar_get_calib_file(odinDevice, config_dir.c_str())) {
                 #ifdef ROS2
                     RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Failed to get calibration file");
@@ -1246,32 +1246,24 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             #endif
         }
         
-        if (need_configure_device) {
-            if (lidar_set_mode(odinDevice, type)) {
-                #ifdef ROS2
-                    RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Set mode failed");
-                #else
-                    ROS_ERROR("Set mode failed");
-                #endif
-                lidar_close_device(odinDevice);
-                lidar_destory_device(odinDevice);
-                odinDevice = nullptr;
-                return;
-            }
-
-            // Apply custom parameters after setting mode
-            if (g_parser && !g_parser->applyCustomParameters(odinDevice)) {
-                #ifdef ROS2
-                    RCLCPP_WARN(rclcpp::get_logger("device_cb"), "Some custom parameters failed to apply");
-                #else
-                    ROS_WARN("Some custom parameters failed to apply");
-                #endif
-            }
-        } else {
+        if (lidar_set_mode(odinDevice, type)) {
             #ifdef ROS2
-                RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Skipping device mode configuration for current state");
+                RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Set mode failed");
             #else
-                ROS_INFO("Skipping device mode configuration for current state");
+                ROS_ERROR("Set mode failed");
+            #endif
+            lidar_close_device(odinDevice);
+            lidar_destory_device(odinDevice);
+            odinDevice = nullptr;
+            return;
+        }
+
+        // Apply custom parameters after setting mode
+        if (g_parser && !g_parser->applyCustomParameters(odinDevice)) {
+            #ifdef ROS2
+                RCLCPP_WARN(rclcpp::get_logger("device_cb"), "Some custom parameters failed to apply");
+            #else
+                ROS_WARN("Some custom parameters failed to apply");
             #endif
         }
 
