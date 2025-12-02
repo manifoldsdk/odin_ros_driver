@@ -56,12 +56,14 @@ typedef enum {
     LIDAR_DT_DEV_STATUS,
     LIDAR_DT_SLAM_ODOMETRY_HIGHFREQ,
     LIDAR_DT_SLAM_ODOMETRY_TF,
+    LIDAR_DT_SLAM_WIWC
 } lidar_data_type_e;
 
 typedef struct {
     int8_t serial[LIDAR_SERIAL_MAX];
     int8_t model[LIDAR_MODEL_MAX];
     bool online;
+    uint32_t initial_state;
 } lidar_device_info_t;
 
 typedef struct {
@@ -187,6 +189,7 @@ typedef struct{
 } lidar_soc_thermal_t;
 typedef struct
 {
+    double uptime_seconds;
     lidar_soc_thermal_t soc_thermal; 
 
     int cpu_use_rate[8];              /* cpu usage rate */
@@ -201,6 +204,14 @@ typedef struct
     int slam_odom_highfreq_tx_odr;  /* slam odom high freq tx output data rate */
 
 } lidar_device_status_t;
+
+typedef enum {
+    LIDAR_DEVICE_NONE = 0,
+    LIDAR_DEVICE_NOT_INITIALIZED,
+    LIDAR_DEVICE_INITIALIZED,
+    LIDAR_DEVICE_STREAMING,
+    LIDAR_DEVICE_STREAM_STOPPED,
+} lidar_device_initial_state_e;
 
 #ifdef __cplusplus
 }

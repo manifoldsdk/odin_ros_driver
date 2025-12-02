@@ -2,6 +2,8 @@
 
 ROS driver suite for Odin sensor modules (Manifold Tech Ltd.) 
 
+Odin1 wiki: https://manifoldtehltd.github.io/wiki/Odin1/Cover.html
+
 ## Odin_ROS_Driver
 
 Compatibility:
@@ -16,17 +18,19 @@ This driver package provides core functionality for point cloud SLAM application
 
 ## 1. Version
 
-Current Version: v0.6.1
+Current Version: v0.7.0
 
 ## 2. Preparation
 
 ### 2.1 OS Requirement
 
-● Ubuntu 18.04 for ROS Melodic;
-
 ● Ubuntu 20.04 for ROS Noetic and ROS2 Foxy;
 
 ● Ubuntu 22.04 for ROS2 Humble;
+
+● Ubuntu 18.04 is currently not supported;
+
+● Ubuntu 24.04 is not officially supported but may work with some modifications.
 
 ### 2.2 Dependencies
 
@@ -67,8 +71,6 @@ sudo apt-get install libopencv-dev
 ```
 
 #### 2.3.4 ROS install
-For ROS Melodic installation, please refer to:
-[ROS Melodic installation instructions](https://wiki.ros.org/melodic/Installation)
 
 For ROS Noetic installation, please refer to:
 [ROS Noetic installation instructions](https://wiki.ros.org/noetic/Installation)
@@ -437,6 +439,9 @@ Disable odin1/image	with sendrgb = 0 in control_command.yaml and try again. If t
 Purge the unused version of opencv and maintain a single complete version, then rebuild the driver and try again.
 
 ## 6.  Contact Information​​
+
+You can contact our support through support@manifoldtech.cn
+
 To help diagnose the issue, please provide the following details to our FAE engineer:
 
 1. ​Current firmware version​​ 
