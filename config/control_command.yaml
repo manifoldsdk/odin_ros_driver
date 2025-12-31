@@ -1,23 +1,70 @@
 register_keys:
-  strict_usb3.0_check: 0  # 0: off: 1: on; if off, allow connection even if usb connection is below usb 3.0 
+  # if off, allow connection even if usb connection is below usb 3.0
+  # ATTENTION: usb 3.0 is always recommended, as advance functionality like SLAM mode requires usb 3.0 for reliable map file transfer
+  strict_usb3.0_check: 0  # 0: off: 1: on;
+
+  # 0: use odin internal system time as data time stamp as before, typical and recommanded;
+  # 1: use host ros time (upon recieve) as data time stamp, only use if you specifically require this setup, not recommanded for most user
+  use_host_ros_time: 0
+
   streamctrl: 1           # 0: off; 1: on
-  sendrgb: 1              # 0: off; 1: on
-  sendimu: 1              # 0: off; 1: on
-  sendodom: 1             # 0: off; 1: on
-  senddtof: 1             # 0: off; 1: on
-  sendcloudslam: 1        # 0: off; 1: on
-  sendcloudrender: 1      # 0: off; 1: on
+
+  # original rgb data in jpeg format from device
   sendrgbcompressed: 1    # 0: off; 1: on
+
+  # RGB data, decoded from original jpeg data from device, bgr8 format
+  # Processed on host device
+  sendrgb: 1              # 0: off; 1: on
+
+  # undistort rgb image processed from decoded rgb data.
+  # depends on sendrgb. related camera parameters can be found in ws/src/odin_ros_driver/config/calib.yaml
+  # Processed on host device
+  sendrgbundistort: 0     # 0: off; 1: on.
+
+  # IMU data
+  sendimu: 1              # 0: off; 1: on
+
+  # Odometry data
+  sendodom: 1             # 0: off; 1: on
+
+  # TF from odom to base_link. Leave it on unless you specifically need it off.
+  # ATTENTION: critical for rviz to show cloud_raw.
+  send_odom_baselink_tf: 1 # 0: off; 1: on.
+
+  # raw dtof data
+  senddtof: 1             # 0: off; 1: on
+
+  # slam cloud data
+  sendcloudslam: 1        # 0: off; 1: on
+
+  # processed with raw point cloud, rgb image, and calib.yaml from device
+  # Processed on host device
+  sendcloudrender: 1      # 0: off; 1: on
+
+  # depth completion demo, high computing resource usage. 
+  # for more information please refer to the readme file.
+  # Processed on host device
   senddepth: 0            # 0: off; 1: on
-  sendrgbundistort: 0     # 0: off; 1: on
+
+  # record rgb, odometry, and slam cloud data as proprietary olx format for further processing in MindCloud(TM) software. 
+  # save path: ws/src/odin_ros_driver/recorddata/{record_start_time}/
+  # ATTENTION: please copy the full folder for post-processing.
   recorddata: 0           # 0: off; 1: on
-  devstatuslog: 1         # 0: off; 1: on
+
+  # Save device runtime status info to ws/src/odin_ros_driver/log/Driver_{drvier_start_time}/Conn_{device_connection_time}/dev_status.csv
+  devstatuslog: 1         # 0: off; 1: on.
+
+  save_log: 0 # 0: off; 1: on; 
+
+  # raw dtof sensor intensity data in gray format, mostly for debug purpose.
   pubintensitygray: 0     # 0: off; 1: on
+
   showpath: 0             # 0: off; 1: on
   showcamerapose: 0       # 0: off; 1: on
+  
   custom_save_map: 0
   custom_map_mode: 0      # 0: Odometry mode 1: SLAM mode 2: Relocalization mode
   custom_init_pos: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
   relocalization_map_abs_path: "" # must be set for Relocalization mode or will fail
   mapping_result_dest_dir: "" # "": use default value; other: use custom value
-  mapping_result_file_name: "" # "": use default value; other: use custom value
+  mapping_result_file_name: "" # "": use default value; other: use custom value 
