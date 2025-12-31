@@ -245,6 +245,16 @@ int lidar_get_custom_parameter(device_handle device, const char* param_name, int
  */
  int lidar_get_mapping_result(device_handle device, const char* dest_dir, const char* file_name);
 
+  /**
+ * @brief enable device log
+ *
+ *
+ * @param device Handle to the target device
+ * @param dest_dir Destination directory to save the logs
+ * @return int 0 on success, -1 on failure
+ */
+ int lidar_enable_encrypted_device_log(device_handle device, const char* dest_dir);
+
 #ifdef __cplusplus
 }
 #endif

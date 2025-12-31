@@ -35,6 +35,7 @@ limitations under the License.
 #include <vector>
 #include <cstdio>
 #include <array>
+#include <system_error>
 // #include <yaml-cpp/yaml.h>
 #include <iomanip>
 #include <sstream>
@@ -45,7 +46,9 @@ limitations under the License.
     #include <ros/package.h>
     #include <ros/ros.h> 
 #endif
-#define ros_driver_version "0.6.1"
+#define ros_driver_version "0.7.1"
+#define recommended_firmware_version "0.8.0"
+
 // Global variable declarations
 static device_handle odinDevice = nullptr;
 static std::atomic<bool> deviceConnected(false);
@@ -88,6 +91,7 @@ int g_sendrgb = 1;
 int g_sendimu = 1;
 int g_senddtof = 1;
 int g_sendodom = 1;
+int g_send_odom_baselink_tf = 0;
 int g_sendcloudslam = 0;
 int g_sendcloudrender = 0;
 int g_sendrgb_compressed = 0;
@@ -98,6 +102,8 @@ int g_pub_intensity_gray = 0;
 int g_show_path = 0;
 int g_show_camerapose = 0;
 int g_strict_usb3_0_check = 0;
+int g_use_host_ros_time = 0;
+int g_save_log = 0;
 
 std::filesystem::path log_root_dir_;
 int g_custom_map_mode = 0;
@@ -169,9 +175,27 @@ class RosNodeControlImpl : public RosNodeControlInterface {
         int getDtofSubframeODR() const override {
             return dtof_subframe_interval_time;
         }
+
+        void setUseHostRosTime(bool use_host_ros_time) override {
+            pub_use_host_ros_time = use_host_ros_time;
+        }
+
+        bool useHostRosTime() const override {
+            return pub_use_host_ros_time;
+        }
     
+        void setSendOdomBaseLinkTF(bool send_odom_baselink_tf) override {
+            pub_odom_baselink_tf = send_odom_baselink_tf;
+        }
+
+        bool sendOdomBaseLinkTF() const override {
+            return pub_odom_baselink_tf;
+        }
+
     private:
         int dtof_subframe_interval_time = 0;
+        bool pub_use_host_ros_time = false;
+        bool pub_odom_baselink_tf = false;
     };
     
 static RosNodeControlImpl g_rosNodeControlImpl;
@@ -790,9 +814,8 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
                 if (dev_status_csv_file) {
                     // append the data row
                     int rc = 0;
-                    rc = std::fprintf(dev_status_csv_file, "%d,%d,%d,%d,%d,%d,", // %.0f
-                                            // get_uptime_seconds(),
-                                            0,
+                    rc = std::fprintf(dev_status_csv_file, "%.2f,%d,%d,%d,%d,%d,", 
+                                            dev_info_data->uptime_seconds,
                                             dev_info_data->soc_thermal.package_temp,
                                             dev_info_data->soc_thermal.cpu_temp,
                                             dev_info_data->soc_thermal.center_temp,
@@ -937,7 +960,14 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
             break;
             case LIDAR_DT_SLAM_ODOMETRY_TF:
             {
-                g_ros_object->publishOdometry((capture_Image_List_t *)&data->stream, OdometryType::TRANSFORM, false, false);
+                if (g_custom_map_mode == 2) {
+                    g_ros_object->publishOdometry((capture_Image_List_t *)&data->stream, OdometryType::TRANSFORM, false, false);
+                }
+            }
+            break;
+            case LIDAR_DT_SLAM_WIWC:
+            {
+                //...
             }
             break;
         default:
@@ -988,18 +1018,6 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             #endif
             return;
         }
-        
-        if (lidar_open_device(odinDevice)) {
-            #ifdef ROS2
-                RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Open device failed");
-            #else
-                ROS_ERROR("Open device failed");
-            #endif
-            lidar_destory_device(odinDevice);
-            odinDevice = nullptr;
-            return;
-        }
-        
 	const std::string package_name = "odin_ros_driver";
 	std::string config_dir = "";
 	#ifdef ROS2
@@ -1024,7 +1042,41 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         #else
             ROS_INFO("Calibration files will be saved to: %s", config_dir.c_str());
         #endif
-        
+
+        std::filesystem::path per_con_log_root_dir;
+        {
+            auto connection_time = std::chrono::system_clock::now();
+            std::time_t t = std::chrono::system_clock::to_time_t(connection_time);
+            std::tm tm{};
+            #ifdef _WIN32
+                localtime_s(&tm, &t);
+            #else
+                localtime_r(&t, &tm);
+            #endif
+            char buf[32];
+            std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &tm);
+            std::string folder_name = std::string("Conn_") + std::string(buf);
+            std::filesystem::path base_log_dir = log_root_dir_.empty()
+                ? std::filesystem::path(config_dir)
+                : log_root_dir_;
+            per_con_log_root_dir = base_log_dir / folder_name;
+
+            std::error_code per_con_dir_err;
+            std::filesystem::create_directories(per_con_log_root_dir, per_con_dir_err);
+            if (per_con_dir_err) {
+                #ifdef ROS2
+                    RCLCPP_WARN(rclcpp::get_logger("device_cb"),
+                                "Failed to create per-connection log directory %s: %s",
+                                per_con_log_root_dir.c_str(),
+                                per_con_dir_err.message().c_str());
+                #else
+                    ROS_WARN("Failed to create per-connection log directory %s: %s",
+                             per_con_log_root_dir.c_str(),
+                             per_con_dir_err.message().c_str());
+                #endif
+            }
+        }
+
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - software_connect_start);
         if (elapsed.count() >= 60) {
@@ -1055,30 +1107,122 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             exit(1);
         }
         else {
-            printf("ros_driver_version:%s\n", ros_driver_version);
+            printf("ros_driver_version:%s, recommended_firmware_version:%s\n", ros_driver_version, recommended_firmware_version);
             printf("get version success.\n");
         }
-        
-        if (lidar_get_calib_file(odinDevice, config_dir.c_str())) {
+
+        if (g_save_log) {
+            if (lidar_enable_encrypted_device_log(const_cast<lidar_device_info_t*>(device), per_con_log_root_dir.c_str())) {
+                #ifdef ROS2
+                    RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Enable log failed");
+                #else
+                    ROS_ERROR("Enable log failed");
+                #endif
+                lidar_close_device(odinDevice);
+                lidar_destory_device(odinDevice);
+                odinDevice = nullptr;
+                return;
+            }
+
             #ifdef ROS2
-                RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Failed to get calibration file");
+                RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Encrypted device log enabled at: %s", per_con_log_root_dir.c_str());
             #else
-                ROS_ERROR("Failed to get calibration file");
+                ROS_INFO("Encrypted device log enabled at: %s", per_con_log_root_dir.c_str());
             #endif
-            lidar_close_device(odinDevice);
-            lidar_destory_device(odinDevice);
-            odinDevice = nullptr;
-            return;
+        } else {
+            #ifdef ROS2
+                RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Encrypted device log disabled via configuration");
+            #else
+                ROS_INFO("Encrypted device log disabled via configuration");
+            #endif
         }
-        
-        #ifdef ROS2
-            RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Successfully retrieved calibration files");
-        #else
-            ROS_INFO("Successfully retrieved calibration files");
-        #endif
+
+        bool need_open_device = true;
+        bool get_calib_file = true;
+        switch (device->initial_state) {
+            case LIDAR_DEVICE_NOT_INITIALIZED:
+                #ifdef ROS2
+                    RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Device state: not initialized, performing full setup");
+                #else
+                    ROS_INFO("Device state: not initialized, performing full setup");
+                #endif
+                break;
+            case LIDAR_DEVICE_INITIALIZED:
+                need_open_device = false;
+                #ifdef ROS2
+                    RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Device state: initialized, skip opening device");
+                #else
+                    ROS_INFO("Device state: initialized, skip opening device");
+                #endif
+                break;
+            case LIDAR_DEVICE_STREAMING:
+                #ifdef ROS2
+                    RCLCPP_WARN(rclcpp::get_logger("device_cb"), "Device state: streaming, this should not happen, exitting...");
+                #else
+                    ROS_WARN("Device state: streaming, this should not happen, exitting...");
+                #endif
+                system("pkill -f rviz");
+                exit(1);
+                break;
+            case LIDAR_DEVICE_STREAM_STOPPED:
+                need_open_device = false;
+                get_calib_file = false;
+                #ifdef ROS2
+                    RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Device state: stream stopped, resume streaming");
+                #else
+                    ROS_INFO("Device state: stream stopped, resume streaming");
+                #endif
+                break;
+            default:
+                #ifdef ROS2
+                    RCLCPP_WARN(rclcpp::get_logger("device_cb"), "Unknown device initial state: %d", device->initial_state);
+                #else
+                    ROS_WARN("Unknown device initial state: %d", device->initial_state);
+                #endif
+                break;
+        }
+
+        if (need_open_device) {
+            if (lidar_open_device(odinDevice)) {
+                #ifdef ROS2
+                    RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Open device failed");
+                #else
+                    ROS_ERROR("Open device failed");
+                #endif
+                lidar_destory_device(odinDevice);
+                odinDevice = nullptr;
+                return;
+            }
+        }
         
         std::string calib_config = config_dir + "/calib.yaml";
         calib_file_ = calib_config;
+        if (get_calib_file) {
+            if (lidar_get_calib_file(odinDevice, config_dir.c_str())) {
+                #ifdef ROS2
+                    RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Failed to get calibration file");
+                #else
+                    ROS_ERROR("Failed to get calibration file");
+                #endif
+                lidar_close_device(odinDevice);
+                lidar_destory_device(odinDevice);
+                odinDevice = nullptr;
+                return;
+            }
+            
+            #ifdef ROS2
+                RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Successfully retrieved calibration files");
+            #else
+                ROS_INFO("Successfully retrieved calibration files");
+            #endif
+        } else {
+            #ifdef ROS2
+                RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Skipping calibration retrieval for current device state");
+            #else
+                ROS_INFO("Skipping calibration retrieval for current device state");
+            #endif
+        }
+        
         if (std::filesystem::exists(calib_config)) {
             g_renderer = std::make_shared<rawCloudRender>();
             if (g_renderer->init(calib_config)) {
@@ -1166,20 +1310,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             return;
         }
         
-        auto con_time = std::chrono::system_clock::now();
-        std::time_t t = std::chrono::system_clock::to_time_t(con_time);
-        std::tm tm{};
-        #ifdef _WIN32
-            localtime_s(&tm, &t);
-        #else
-            localtime_r(&t, &tm);
-        #endif
-        char buf[32];
-        std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &tm);
-        std::string folder_name = std::string("Conn_") + std::string(buf);
-        std::filesystem::path per_con_log_root_dir_ = log_root_dir_ / folder_name;
-        std::filesystem::create_directories(per_con_log_root_dir_);
-        std::string dev_status_csv_file_path_ = per_con_log_root_dir_ / "dev_status.csv";
+        std::string dev_status_csv_file_path_ = per_con_log_root_dir / "dev_status.csv";
 
         if (dev_status_csv_file) {
             std::fflush(dev_status_csv_file);
@@ -1359,6 +1490,7 @@ int main(int argc, char *argv[])
         g_sendimu       = get_key_value("sendimu", 1);
         g_senddtof      = get_key_value("senddtof", 1);
         g_sendodom      = get_key_value("sendodom", 1);
+        g_send_odom_baselink_tf = get_key_value("send_odom_baselink_tf", 0);
         g_sendcloudslam = get_key_value("sendcloudslam", 0);
         g_sendcloudrender = get_key_value("sendcloudrender", 1);
         g_sendrgb_compressed = get_key_value("sendrgbcompressed", 1);
@@ -1371,6 +1503,16 @@ int main(int argc, char *argv[])
         g_show_camerapose = get_key_value("showcamerapose", 0);
         g_log_level = get_key_value("log_devel", LOG_LEVEL_INFO);
         g_strict_usb3_0_check = get_key_value("strict_usb3.0_check", 1);
+        g_use_host_ros_time = get_key_value("use_host_ros_time", 0);
+        g_save_log = get_key_value("save_log", 0);
+
+        if (g_use_host_ros_time) {
+            g_rosNodeControlImpl.setUseHostRosTime(true);
+        }
+
+        if (g_send_odom_baselink_tf) {
+            g_rosNodeControlImpl.setSendOdomBaseLinkTF(true);
+        }
 
         auto get_key_str_value = [&](const std::string& key, const std::string& default_value) -> std::string {
             auto it = keys_w_str_val.find(key);
