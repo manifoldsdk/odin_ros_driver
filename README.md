@@ -2,7 +2,7 @@
 
 ROS driver suite for Odin sensor modules (Manifold Tech Ltd.) 
 
-Odin1 wiki: https://manifoldtehltd.github.io/wiki/Odin1/Cover.html
+Odin1 wiki: https://manifoldtechltd.github.io/wiki/Odin1/Cover.html
 
 ## Odin_ROS_Driver
 
@@ -18,7 +18,9 @@ This driver package provides core functionality for point cloud SLAM application
 
 ## 1. Version
 
-Current Version: v0.7.1
+Current version: v0.8.0
+
+Required device firmware version: v0.9.0
 
 ## 2. Preparation
 
@@ -262,7 +264,7 @@ float32 x             // X axis, in meters
 float32 y             // Y axis, in meters
 float32 z             // Z axis, in meters
 uint8  intensity      // Reflectivity, range 0–255
-uint16 confidence     // Point confidence, range 0–65535
+uint16 confidence     // Point confidence, actual value range from 0 to around 1300 in typical scene, higher value means more reliable. Recommanded filtering threshold is 30-35, should be adjusted accordingly.
 float32 offset_time   // Time offset relative to the base timestamp unit: s 
 ```
 
@@ -437,6 +439,40 @@ Disable odin1/image	with sendrgb = 0 in control_command.yaml and try again. If t
 **Resolution** 
 
 Purge the unused version of opencv and maintain a single complete version, then rebuild the driver and try again.
+
+### 5.10 ROS Driver printing "TF_OLD_DATA ignoring data" warning
+
+**Error Message**  
+
+```shell
+[rviz2-3] Warning: TF_OLD_DATA ignoring data from the past for frame odin1_base_link at time 20.547632 according to authority Authority undetectable
+[rviz2-3] Possible reasons are listed at http://wiki.ros.org/tf/Errors%20explained
+[rviz2-3]          at line 294 in ./src/buffer_core.cpp
+```
+
+**Reason**
+
+This is a ros & rviz feature to warn user that some tf data is being ignored due to timestamp conflicts. It happens when user keeps ros driver running and power-cycles odin device, which cause odin's internal system time being reset and now data timestamps conflicts with old data recieved by rviz during last run.
+
+**Resolution** 
+
+There's a reset button on bottom of rviz gui. Click on this button will reset rviz's internal state and stop the warning.
+
+### 5.11 ROS Driver printing "unknown cmd code: xx" error
+
+**Error Message**  
+
+```shell
+<ERROR><api.cpp:cmd_data_deal:418>: unknow command code 21.
+```
+
+**Reason**
+
+This is due to ros driver version mismatch with device firmware version, resulting in ros driver unable to decode new data added in newer firmware.
+
+**Resolution** 
+
+Please make sure you are using most up-to-date ros driver and device firmware.
 
 ## 6.  Contact Information​​
 

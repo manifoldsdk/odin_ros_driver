@@ -128,7 +128,7 @@ int lidar_set_mode(device_handle device, int mode);
  * 
  * @param device Handle to the target device
  * @param type Type of data stream to start (see stream type definitions in lidar_api_type.h)
- * @param dtof_subframe_odr DTOF subframe ODR from device, used for raw point cloud per-point time offset calculation
+ * @param dtof_subframe_odr DTOF subframe ODR from device, used for raw point cloud per-point time offset estimation
  * @return int 0 on success, negative error code on failure
  */
 int lidar_start_stream(device_handle device, int type, uint32_t &dtof_subframe_odr);
@@ -195,7 +195,7 @@ void lidar_log_set_level(lidar_log_level_e level);
  * @param version struct Pointer to receive the version information
  * @return int 0 on success, negative error code on failure
  */
-int lidar_get_version(device_handle device);
+int lidar_get_version(device_handle device,lidar_fireware_version_t *version);
 
 /**
  * @brief Set custom algorithm parameters for the device

@@ -92,7 +92,8 @@ typedef struct {
     int64_t orient[4];
     int64_t linear_velocity[3];
     int64_t angular_velocity[3];
-    int64_t cov[3 * 3 * 2];
+    double pose_cov[36];
+    double twist_cov[36];
 } ros_odom_convert_complete_t;
 
 typedef struct {
@@ -135,12 +136,18 @@ typedef struct {
 } lidar_data_callback_info_t;
 
 typedef struct {
-    char mcu_version[64];
-    char sys_version[64];
-    char slam_version[64];
-    char dev_app_version[64];
-    char host_app_version[64];
-} lidar_version_t;
+    int major;
+    int minor;
+    int patch;
+}lidar_version_t;
+
+typedef struct {
+    lidar_version_t kernel_version;
+    lidar_version_t mcu_version;
+    lidar_version_t soc_version;
+    lidar_version_t Daemon_proc_version;
+    lidar_version_t slam_version;
+} lidar_fireware_version_t;
 
 /**
  * @brief RGB image sensor frame rate

@@ -46,8 +46,10 @@ limitations under the License.
     #include <ros/package.h>
     #include <ros/ros.h> 
 #endif
-#define ros_driver_version "0.7.1"
-#define recommended_firmware_version "0.8.0"
+#define ros_driver_version "0.8.0"
+#define required_firmware_version_major 0
+#define required_firmware_version_minor 9
+#define required_firmware_version_patch 0
 
 // Global variable declarations
 static device_handle odinDevice = nullptr;
@@ -107,6 +109,7 @@ int g_save_log = 0;
 
 std::filesystem::path log_root_dir_;
 int g_custom_map_mode = 0;
+bool g_relocalization_success_msg_printed = false;
 
 std::string g_relocalization_map_abs_path = "";
 std::string g_mapping_result_dest_dir = "";
@@ -375,9 +378,9 @@ static void custom_parameter_monitor() {
                             #endif
                         } else if (ret == 0) {
                             #ifdef ROS2
-                                RCLCPP_INFO(rclcpp::get_logger("param_monitor"), "map get success");
+                                RCLCPP_INFO(rclcpp::get_logger("param_monitor"), "map get start success, now transfering...");
                             #else
-                                ROS_INFO("map get success");
+                                ROS_INFO("map get start success, now transfering...");
                             #endif
                         } else {
                             #ifdef ROS2
@@ -389,10 +392,15 @@ static void custom_parameter_monitor() {
                     }
                     last_save_map_val = value;
 
+                } else if (result == -2) {
+                    #ifdef ROS2
+                        RCLCPP_INFO(rclcpp::get_logger("param_monitor"),"file transfering, try again later...");
+                    #else
+                        ROS_INFO("file transfering, try again later...");
+                    #endif
                 } else {
                     #ifdef ROS2
-                        RCLCPP_WARN(rclcpp::get_logger("param_monitor"),
-                                   "Failed to get save_map parameter, error: %d", result);
+                        RCLCPP_WARN(rclcpp::get_logger("param_monitor"),"Failed to get save_map parameter, error: %d", result);
                     #else
                         ROS_WARN("Failed to get save_map parameter, error: %d", result);
                     #endif
@@ -962,12 +970,22 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
             {
                 if (g_custom_map_mode == 2) {
                     g_ros_object->publishOdometry((capture_Image_List_t *)&data->stream, OdometryType::TRANSFORM, false, false);
+                    if (!g_relocalization_success_msg_printed) {
+                    #ifdef ROS2
+                        RCLCPP_INFO(rclcpp::get_logger("odom"), "relocalization success!");
+                    #else
+                        ROS_INFO("relocalization success!");
+                    #endif
+                        g_relocalization_success_msg_printed = true;
+                    }
                 }
             }
             break;
             case LIDAR_DT_SLAM_WIWC:
             {
-                //...
+                if(g_record_data ) {
+                    g_ros_object->recordrotate((capture_Image_List_t *)&data->stream);
+                }
             }
             break;
         default:
@@ -1097,18 +1115,46 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             return;
         }
         
-        if(lidar_get_version(odinDevice)) {
+        lidar_fireware_version_t version;
+        if(lidar_get_version(odinDevice,&version)) {
             #ifdef ROS2
                 RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Failed to get device firmware version, potential incompatible, please upgrade device firmware and retry.");
             #else
                 ROS_ERROR("Failed to get device firmware version, potential incompatible, please upgrade device firmware and retry.");
             #endif
             system("pkill -f rviz");
+            system("pkill -f host_sdk_sample");
             exit(1);
         }
         else {
-            printf("ros_driver_version:%s, recommended_firmware_version:%s\n", ros_driver_version, recommended_firmware_version);
-            printf("get version success.\n");
+            #ifdef ROS2
+                RCLCPP_INFO(rclcpp::get_logger(__func__), "ros_driver_version:%s, recommended_firmware_version:%d.%d.%d", ros_driver_version, required_firmware_version_major, required_firmware_version_minor, required_firmware_version_patch);
+                RCLCPP_INFO(rclcpp::get_logger(__func__), "get version success.");
+                RCLCPP_INFO(rclcpp::get_logger(__func__), "kernel_version: V%d.%d.%d",version.kernel_version.major,version.kernel_version.minor,version.kernel_version.patch);
+                RCLCPP_INFO(rclcpp::get_logger(__func__), "mcu_version: V%d.%d.%d",version.mcu_version.major,version.mcu_version.minor,version.mcu_version.patch);
+                RCLCPP_INFO(rclcpp::get_logger(__func__), "soc_version: V%d.%d.%d",version.soc_version.major,version.soc_version.minor,version.soc_version.patch);
+                RCLCPP_INFO(rclcpp::get_logger(__func__), "Daemon_proc_version: V%d.%d.%d",version.Daemon_proc_version.major,version.Daemon_proc_version.minor,version.Daemon_proc_version.patch);
+                RCLCPP_INFO(rclcpp::get_logger(__func__), "slam_version: V%d.%d.%d",version.slam_version.major,version.slam_version.minor,version.slam_version.patch);
+            #else
+                ROS_INFO("ros_driver_version:%s, recommended_firmware_version:%d.%d.%d", ros_driver_version, required_firmware_version_major, required_firmware_version_minor, required_firmware_version_patch);
+                ROS_INFO("get version success.");
+                ROS_INFO("kernel_version: V%d.%d.%d",version.kernel_version.major,version.kernel_version.minor,version.kernel_version.patch);
+                ROS_INFO("mcu_version: V%d.%d.%d",version.mcu_version.major,version.mcu_version.minor,version.mcu_version.patch);
+                ROS_INFO("soc_version: V%d.%d.%d",version.soc_version.major,version.soc_version.minor,version.soc_version.patch);
+                ROS_INFO("Daemon_proc_version: V%d.%d.%d",version.Daemon_proc_version.major,version.Daemon_proc_version.minor,version.Daemon_proc_version.patch);
+                ROS_INFO("slam_version: V%d.%d.%d",version.slam_version.major,version.slam_version.minor,version.slam_version.patch);
+            #endif
+
+            if (version.soc_version.major < required_firmware_version_major || (version.soc_version.minor < required_firmware_version_minor) || (version.soc_version.patch < required_firmware_version_patch)) {
+                #ifdef ROS2
+                    RCLCPP_ERROR(rclcpp::get_logger(__func__),"The soc version is too low, please upgrade the device firmware to at least %d.%d.%d\n",required_firmware_version_major,required_firmware_version_minor,required_firmware_version_patch);
+                #else
+                    ROS_ERROR("The soc version is too low, please upgrade the device firmware to at least %d.%d.%d\n",required_firmware_version_major,required_firmware_version_minor,required_firmware_version_patch);
+                #endif
+                system("pkill -f rviz");
+                system("pkill -f host_sdk_sample");
+                exit(1);
+            }
         }
 
         if (g_save_log) {
@@ -1273,7 +1319,26 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             ROS_INFO("Custom map mode: %d", g_custom_map_mode);
         #endif
 
-        if (g_custom_map_mode == 2) {
+        if (g_custom_map_mode == 1) {
+            int save_map_init_value = 0;
+            int result = lidar_set_custom_parameter(odinDevice, "save_map", &save_map_init_value, sizeof(int));
+
+            if (result == 0) {
+                #ifdef ROS2
+                    RCLCPP_INFO(rclcpp::get_logger("command_processor"), 
+                            "Successfully initialized %s = %d", "save_map", save_map_init_value);
+                #else
+                    ROS_INFO("Successfully initialized %s = %d", "save_map", save_map_init_value);
+                #endif
+            } else {
+                #ifdef ROS2
+                    RCLCPP_ERROR(rclcpp::get_logger("command_processor"), 
+                                "Failed to initialize %s = %d, error: %d", "save_map", save_map_init_value, result);
+                #else
+                    ROS_ERROR("Failed to initialize %s = %d, error: %d", "save_map", save_map_init_value, result);
+                #endif
+            } 
+        } else if (g_custom_map_mode == 2) {
             if (g_relocalization_map_abs_path != "" && std::filesystem::exists(g_relocalization_map_abs_path) && 
                 lidar_set_relocalization_map(odinDevice, g_relocalization_map_abs_path.c_str()) == 0) {
                 #ifdef ROS2

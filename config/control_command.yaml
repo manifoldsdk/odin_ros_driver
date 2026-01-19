@@ -62,9 +62,10 @@ register_keys:
   showpath: 0             # 0: off; 1: on
   showcamerapose: 0       # 0: off; 1: on
   
-  custom_save_map: 0
   custom_map_mode: 0      # 0: Odometry mode 1: SLAM mode 2: Relocalization mode
   custom_init_pos: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
   relocalization_map_abs_path: "" # must be set for Relocalization mode or will fail
-  mapping_result_dest_dir: "" # "": use default value; other: use custom value
-  mapping_result_file_name: "" # "": use default value; other: use custom value 
+
+  # To get the mapping result file, please use the set_param.sh script provided: "./set_param.sh save_map 1"
+  mapping_result_dest_dir: "" # "": if not specified, save to default location of {ws}/src/odin_ros_driver/map/{driver_start_time}/
+  mapping_result_file_name: "" # "": if not specified, save to location above with default file name of map_{map_save_time}.bin

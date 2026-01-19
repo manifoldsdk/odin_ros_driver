@@ -228,6 +228,10 @@ public:
     int get_image_index() {
         return image_index_.load();
     }
+
+    int get_wcwi_index() {
+        return wcwi_index_.load();
+    }
  
     rawCloudRender render_;
     void publishImu(imu_convert_data_t *stream) {
@@ -913,6 +917,7 @@ void publishRgb(capture_Image_List_t *stream) {
             uint8_t r = ptr[3] & 0xff;
             uint8_t g = ptr[4] & 0xff;
             uint8_t b = ptr[5] & 0xff;  
+            uint8_t a = ptr[6] & 0xff;
             
             uint32_t packed_rgb = (static_cast<uint32_t>(r) << 16) | 
                                 (static_cast<uint32_t>(g) << 8)  | 
@@ -930,7 +935,7 @@ void publishRgb(capture_Image_List_t *stream) {
             const uint32_t idx_now = cloud_index_.fetch_add(1, std::memory_order_relaxed);
             // Compute total blob size: header + per-point payload
             const size_t header_size = sizeof(uint32_t) + sizeof(double) + sizeof(uint32_t);
-            const size_t point_size = sizeof(float) * 3 + sizeof(uint8_t) * 3;
+            const size_t point_size = sizeof(float) * 3 + sizeof(uint8_t) * 4;
             std::vector<uint8_t> blob;
             blob.reserve(header_size + static_cast<size_t>(points) * point_size);
             auto append_pod = [&](const auto& v) {
@@ -949,12 +954,14 @@ void publishRgb(capture_Image_List_t *stream) {
                 uint8_t r = static_cast<uint8_t>(ptr[3] & 0xff);
                 uint8_t g = static_cast<uint8_t>(ptr[4] & 0xff);
                 uint8_t b = static_cast<uint8_t>(ptr[5] & 0xff);
+                uint8_t a = static_cast<uint8_t>(ptr[6] & 0xff);
                 append_pod(fx);
                 append_pod(fy);
                 append_pod(fz);
                 blob.push_back(r);
                 blob.push_back(g);
                 blob.push_back(b);
+                blob.push_back(a);
             }
             data_logger_->enqueuePointCloudFrame(std::move(blob));
         }
@@ -965,6 +972,114 @@ void publishRgb(capture_Image_List_t *stream) {
             xyzrgbacloud_pub_.publish(msg);
 #endif
     }
+
+    void recordrotate(capture_Image_List_t* stream) { 
+        if(data_logger_) {
+            uint32_t data_len = stream->imageList[0].length;
+            if (data_len == sizeof(ros_odom_convert_complete_t)) {
+                ros_odom_convert_complete_t* odom_data = (ros_odom_convert_complete_t*)stream->imageList[0].pAddr;
+                const uint32_t idx_now = wcwi_index_.fetch_add(1, std::memory_order_relaxed);
+                const double ts_sec = static_cast<double>(odom_data->timestamp_ns) / 1e9;
+                float pose_arr[4];
+                pose_arr[0] = static_cast<float>((odom_data->orient[0]) / 1e6);
+                pose_arr[1] = static_cast<float>((odom_data->orient[1]) / 1e6);
+                pose_arr[2] = static_cast<float>((odom_data->orient[2]) / 1e6);
+                pose_arr[3] = static_cast<float>((odom_data->orient[3]) / 1e6);
+
+                // Save only rotate (pose_arr) to bin file
+                std::vector<uint8_t> blob;
+                blob.reserve(sizeof(uint32_t) + sizeof(double) + sizeof(float) * 4);
+                auto append_pod = [&](const auto& v) {
+                    const uint8_t* p = reinterpret_cast<const uint8_t*>(&v);
+                    blob.insert(blob.end(), p, p + sizeof(v));
+                };
+                append_pod(idx_now);
+                append_pod(ts_sec);
+                for (int i = 0; i < 4; ++i) append_pod(pose_arr[i]);
+                data_logger_->enqueueRotateFrame(std::move(blob));
+
+                // Build TCL matrix (4x4) from pose_cov
+                Eigen::Matrix4d T_CL = Eigen::Matrix4d::Identity();
+                for (int idx = 0; idx < 16; ++idx) {
+                    T_CL(idx / 4, idx % 4) = static_cast<double>(odom_data->pose_cov[idx]);
+                }
+                
+                // Build TIL matrix (4x4) from twist_cov
+                Eigen::Matrix4d T_IL = Eigen::Matrix4d::Identity();
+                for (int idx = 0; idx < 16; ++idx) {
+                    T_IL(idx / 4, idx % 4) = static_cast<double>(odom_data->twist_cov[idx]);
+                }
+                
+                // Extract rotation and translation from T_CL
+                Eigen::Matrix3d RCL = T_CL.block<3, 3>(0, 0);
+                Eigen::Vector3d TCL = T_CL.block<3, 1>(0, 3);
+                
+                // Extract rotation and translation from T_IL
+                Eigen::Matrix3d RIL = T_IL.block<3, 3>(0, 0);
+                Eigen::Vector3d TIL = T_IL.block<3, 1>(0, 3);
+                    
+                // Save RIL, TIL, RCL, TCL to YAML file
+                static int save_count = 0;
+                static int index_count = 0;
+                save_count++;
+                
+                bool should_save = true; // Always save, or modify this condition as needed
+                if (should_save || save_count % 1 == 0 || index_count == 0) {
+                    std::string OUTPUT_PATH = root_dir_.string();
+                    std::ofstream yaml_file;
+                    if(index_count == 0)
+                        yaml_file.open(OUTPUT_PATH + "/calib_online.yaml");
+                    else
+                        yaml_file.open(OUTPUT_PATH + "/calib_online.yaml", std::ios::app);
+                    
+                    if (yaml_file.is_open()) {
+                        yaml_file << "frame:\n";
+                        yaml_file << "    index: " << index_count << "\n";
+                        yaml_file << "    timestamp: " << std::fixed << std::setprecision(10) << ts_sec << "\n";
+                        yaml_file << "    cam_num: 1\n";
+                        
+                        // Save TCL (camera-lidar translation) in the same format as Tcl_0
+                        yaml_file << "    Tcl_0: [\n";
+                        Eigen::Matrix4d T_CL_output = Eigen::Matrix4d::Identity();
+                        T_CL_output.block<3, 3>(0, 0) = RCL;
+                        T_CL_output.block<3, 1>(0, 3) = TCL;
+                        for (int i = 0; i < 4; i++) {
+                            yaml_file << "        ";
+                            for (int j = 0; j < 4; j++) {
+                                yaml_file << std::fixed << std::setprecision(10) << T_CL_output(i, j);
+                                if (i != 3 || j != 3) yaml_file << ", ";
+                            }
+                            if (i != 3) yaml_file << "\n";
+                        }
+                        yaml_file << "\n    ]\n\n";
+                        
+                        // Save TIL (IMU-lidar transformation) as body_T_lidar
+                        yaml_file << "    body_T_lidar: !!opencv-matrix\n";
+                        yaml_file << "       rows: 4\n";
+                        yaml_file << "       cols: 4\n";
+                        yaml_file << "       dt: d\n";
+                        yaml_file << "       data: [ ";
+                        Eigen::Matrix4d T_IL_output = Eigen::Matrix4d::Identity();
+                        T_IL_output.block<3, 3>(0, 0) = RIL;
+                        T_IL_output.block<3, 1>(0, 3) = TIL;
+                        for (int i = 0; i < 4; i++) {
+                            for (int j = 0; j < 4; j++) {
+                                yaml_file << std::fixed << std::setprecision(10) << T_IL_output(i, j);
+                                if (i != 3 || j != 3) yaml_file << ",";
+                            }
+                            if (i != 3) yaml_file << "\n              ";
+                        }
+                        yaml_file << "]\n\n";
+                        
+                        index_count++;
+                        yaml_file.close();
+                    }
+                }
+            }
+        }
+
+    }
+
 
     void publishOdometry(capture_Image_List_t* stream, OdometryType odom_type, bool show_path, bool show_camerapose) {
         
@@ -1034,14 +1149,13 @@ void publishRgb(capture_Image_List_t *stream) {
                 msg.twist.twist.angular.y = static_cast<double>(odom_data->angular_velocity[1]) / 1e6;
                 msg.twist.twist.angular.z = static_cast<double>(odom_data->angular_velocity[2]) / 1e6;
 
-                msg.pose.covariance = {
-                    static_cast<double>(odom_data->cov[0]) / 1e9, static_cast<double>(odom_data->cov[1]) / 1e9, static_cast<double>(odom_data->cov[2]) / 1e9, 0.0, 0.0, 0.0,
-                    static_cast<double>(odom_data->cov[3]) / 1e9, static_cast<double>(odom_data->cov[4]) / 1e9, static_cast<double>(odom_data->cov[5]) / 1e9, 0.0, 0.0, 0.0,
-                    static_cast<double>(odom_data->cov[6]) / 1e9, static_cast<double>(odom_data->cov[7]) / 1e9, static_cast<double>(odom_data->cov[8]) / 1e9, 0.0, 0.0, 0.0,
-                    0.0, 0.0, 0.0, static_cast<double>(odom_data->cov[9]) / 1e9, static_cast<double>(odom_data->cov[10]) / 1e9, static_cast<double>(odom_data->cov[11]) / 1e9,
-                    0.0, 0.0, 0.0, static_cast<double>(odom_data->cov[12]) / 1e9, static_cast<double>(odom_data->cov[13]) / 1e9, static_cast<double>(odom_data->cov[14]) / 1e9,
-                    0.0, 0.0, 0.0, static_cast<double>(odom_data->cov[15]) / 1e9, static_cast<double>(odom_data->cov[16]) / 1e9, static_cast<double>(odom_data->cov[17]) / 1e9,
-                };
+                for (int i = 0; i < 36; ++i) {
+                    msg.pose.covariance[i] = odom_data->pose_cov[i];
+                }
+
+                for (int i = 0; i < 36; ++i) {
+                    msg.twist.covariance[i] = odom_data->twist_cov[i];
+                }
             
             } else if (data_len == sizeof(ros2_odom_convert_t)) {
 
@@ -1407,6 +1521,7 @@ private:
     std::atomic<uint32_t> pose_index_{0};
     std::atomic<uint32_t> cloud_index_{0};
     std::atomic<uint32_t> image_index_{0};
+    std::atomic<uint32_t> wcwi_index_{0};
 
     std::filesystem::path root_dir_;
 
