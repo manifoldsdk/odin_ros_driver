@@ -334,7 +334,7 @@ Visualization Manager:
             Durability Policy: Volatile
             History Policy: Keep Last
             Reliability Policy: Reliable
-            Value: /odin1/depth_img_competetion
+            Value: /odin1/depth_img_completion
           Value: true
         - Alpha: 1
           Autocompute Intensity Bounds: true
@@ -366,7 +366,7 @@ Visualization Manager:
             Filter size: 10
             History Policy: Keep Last
             Reliability Policy: Reliable
-            Value: /odin1/depth_img_competetion_cloud
+            Value: /odin1/depth_img_completion_cloud
           Use Fixed Frame: true
           Use rainbow: true
           Value: false

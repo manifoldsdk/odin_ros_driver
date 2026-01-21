@@ -24,8 +24,8 @@ DepthImageRos2Node::DepthImageRos2Node(const rclcpp::NodeOptions & options)
     cloud_raw_topic_ = this->declare_parameter<std::string>("cloud_raw_topic", "/odin1/cloud_raw");
     color_compressed_topic_ = this->declare_parameter<std::string>("color_compressed_topic", "/odin1/image/compressed");
     color_raw_topic_ = this->declare_parameter<std::string>("color_raw_topic", "/odin1/image");
-    depth_image_topic_ = this->declare_parameter<std::string>("depth_image_topic", "/odin1/depth_img_competetion");
-    depth_cloud_topic_ = this->declare_parameter<std::string>("depth_cloud_topic", "/odin1/depth_img_competetion_cloud");
+    depth_image_topic_ = this->declare_parameter<std::string>("depth_image_topic", "/odin1/depth_img_completion");
+    depth_cloud_topic_ = this->declare_parameter<std::string>("depth_cloud_topic", "/odin1/depth_img_completion_cloud");
 
     RCLCPP_INFO_STREAM(this->get_logger(), 
                        "\n  cloud_raw_topic: " << cloud_raw_topic_
