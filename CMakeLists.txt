@@ -306,6 +306,8 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     install(TARGETS 
         host_sdk_sample 
         pcd2depth_ros2_node
+        depth_image_ros2_node_lib
+        pointcloud_depth_converter_ros2
         EXPORT export_${PROJECT_NAME}
         ARCHIVE DESTINATION lib
         LIBRARY DESTINATION lib
