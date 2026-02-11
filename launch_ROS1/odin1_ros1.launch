@@ -21,6 +21,11 @@
         <rosparam command="load" file="$(find odin_ros_driver)/config/control_command.yaml"/>
         <param name="calib_file_path" value="$(find odin_ros_driver)/config/calib.yaml"/>
     </node>
+
+    <node pkg="odin_ros_driver" type="cloud_reprojection_node" name="cloud_reprojection_node" output="screen" >
+        <rosparam command="load" file="$(find odin_ros_driver)/config/control_command.yaml"/>
+        <param name="calib_file_path" value="$(find odin_ros_driver)/config/calib.yaml"/>
+    </node>
     
     <!-- Launch RViz with configuration -->
     <node name="rviz" pkg="rviz" type="rviz" args="-d $(arg rviz_config)" output="screen"/>

@@ -56,7 +56,8 @@ typedef enum {
     LIDAR_DT_DEV_STATUS,
     LIDAR_DT_SLAM_ODOMETRY_HIGHFREQ,
     LIDAR_DT_SLAM_ODOMETRY_TF,
-    LIDAR_DT_SLAM_WIWC
+    LIDAR_DT_SLAM_WIWC,
+    LIDAR_DT_NTP
 } lidar_data_type_e;
 
 typedef struct {
@@ -116,6 +117,11 @@ typedef struct {
     uint32_t width;
     uint32_t height;
 } buffer_List_t;
+
+typedef struct {
+    double delay;
+    double offset;
+} ptp_sync_data_t;
 
 typedef struct capture_Image_List_t {
     uint32_t imageCount;
@@ -219,6 +225,15 @@ typedef enum {
     LIDAR_DEVICE_STREAMING,
     LIDAR_DEVICE_STREAM_STOPPED,
 } lidar_device_initial_state_e;
+
+typedef enum {
+    LIDAR_DEPTH_ODR_10HZ = 0,
+    LIDAR_DEPTH_ODR_14_5HZ,
+} lidar_depth_odr_e;
+
+typedef struct {
+    lidar_depth_odr_e odr;
+} lidar_depth_para_t;
 
 #ifdef __cplusplus
 }

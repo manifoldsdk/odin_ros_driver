@@ -3,9 +3,10 @@ register_keys:
   # ATTENTION: usb 3.0 is always recommended, as advance functionality like SLAM mode requires usb 3.0 for reliable map file transfer
   strict_usb3.0_check: 0  # 0: off: 1: on;
 
-  # 0: use odin internal system time as data time stamp as before, typical and recommanded;
-  # 1: use host ros time (upon recieve) as data time stamp, only use if you specifically require this setup, not recommanded for most user
-  use_host_ros_time: 0
+  # 0: use odin internal system time as data time stamp, typical and recommended;
+  # 1: use host ros time (upon receive) as data time stamp, only use if you specifically require this setup, not recommended for most users
+  # 2: align odin1 time to host time, timestamp is the sensor data reception time on host time axis
+  use_host_ros_time: 2
 
   streamctrl: 1           # 0: off; 1: on
 
@@ -33,6 +34,12 @@ register_keys:
 
   # raw dtof data
   senddtof: 1             # 0: off; 1: on
+  cloud_raw_confidence_threshold: 35 # please refer to readme for more details
+  
+  # dtof sensor frame rate. Supported values: 100 (10fps) or 145 (14.5fps)
+  # Higher frame rate provides smoother point cloud data but may increase data bandwidth
+  # Note: value is multiplied by 10 (e.g., 145 means 14.5fps)
+  dtof_fps: 100           # 100: 10fps; 145: 14.5fps
 
   # slam cloud data
   sendcloudslam: 1        # 0: off; 1: on
@@ -46,10 +53,14 @@ register_keys:
   # Processed on host device
   senddepth: 0            # 0: off; 1: on
 
+  # cloud reprojection demo, projects cloud_slam to camera image using odometry
+  # Processed on host device
+  sendreprojection: 1    # 0: off; 1: on
+
   # record rgb, odometry, and slam cloud data as proprietary olx format for further processing in MindCloud(TM) software. 
   # save path: ws/src/odin_ros_driver/recorddata/{record_start_time}/
   # ATTENTION: please copy the full folder for post-processing.
-  recorddata: 0           # 0: off; 1: on
+  recorddata: 1           # 0: off; 1: on
 
   # Save device runtime status info to ws/src/odin_ros_driver/log/Driver_{drvier_start_time}/Conn_{device_connection_time}/dev_status.csv
   devstatuslog: 1         # 0: off; 1: on.

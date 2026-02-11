@@ -128,7 +128,6 @@ int lidar_set_mode(device_handle device, int mode);
  * 
  * @param device Handle to the target device
  * @param type Type of data stream to start (see stream type definitions in lidar_api_type.h)
- * @param dtof_subframe_odr DTOF subframe ODR from device, used for raw point cloud per-point time offset estimation
  * @return int 0 on success, negative error code on failure
  */
 int lidar_start_stream(device_handle device, int type, uint32_t &dtof_subframe_odr);
@@ -254,6 +253,18 @@ int lidar_get_custom_parameter(device_handle device, const char* param_name, int
  * @return int 0 on success, -1 on failure
  */
  int lidar_enable_encrypted_device_log(device_handle device, const char* dest_dir);
+
+
+/**
+ * @brief Set the depth parameters for the device
+ * 
+ * This function must be called before starting data stream.
+ *
+ * @param device Handle to the target device
+ * @param params Pointer to the depth parameters to set
+ * @return int 0 on success, negative error code on failure
+ */
+int lidar_set_depth_parameter(device_handle device, const lidar_depth_para_t *params);
 
 #ifdef __cplusplus
 }

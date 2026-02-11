@@ -195,6 +195,20 @@ if(ROS_VERSION STREQUAL "ROS1")
     ${PCL_LIBRARIES}
     )
 
+    add_library(cloud_reprojector src/cloud_reprojector.cpp)
+    target_link_libraries(cloud_reprojector
+    ${OpenCV_LIBS}
+    ${PCL_LIBRARIES}
+    )
+
+    add_executable(cloud_reprojection_node src/cloud_reprojection_ros.cpp)
+    target_link_libraries(cloud_reprojection_node
+    cloud_reprojector
+    ${catkin_LIBRARIES}
+    ${OpenCV_LIBS}
+    ${PCL_LIBRARIES}
+    )
+
     # Installation rules
     install(TARGETS host_sdk_sample
         RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
@@ -301,11 +315,37 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         message_filters
     )
 
+    add_library(cloud_reprojector_ros2 src/cloud_reprojector.cpp)
+    target_compile_definitions(cloud_reprojector_ros2 PRIVATE ROS2)
+    target_link_libraries(cloud_reprojector_ros2
+        ${OpenCV_LIBS}
+        ${PCL_LIBRARIES}
+    )
+
+    add_executable(cloud_reprojection_ros2_node src/cloud_reprojection_ros.cpp)
+    target_compile_definitions(cloud_reprojection_ros2_node PRIVATE ROS2)
+    target_link_libraries(cloud_reprojection_ros2_node
+        cloud_reprojector_ros2
+        ${OpenCV_LIBS}
+        ${PCL_LIBRARIES}
+        yaml-cpp
+    )
+    ament_target_dependencies(cloud_reprojection_ros2_node
+        rclcpp
+        sensor_msgs
+        nav_msgs
+        cv_bridge
+        image_transport
+        pcl_conversions
+        message_filters
+    )
+
     # Installation rules - ensure all install targets are defined before ament_package()
     # Install executable
     install(TARGETS 
         host_sdk_sample 
         pcd2depth_ros2_node
+        cloud_reprojection_ros2_node
         EXPORT export_${PROJECT_NAME}
         ARCHIVE DESTINATION lib
         LIBRARY DESTINATION lib

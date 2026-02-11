@@ -18,9 +18,9 @@ This driver package provides core functionality for point cloud SLAM application
 
 ## 1. Version
 
-Current version: v0.8.0
+Current version: v0.9.0
 
-Required device firmware version: v0.9.0
+Required device firmware version: v0.10.0
 
 ## 2. Preparation
 
@@ -198,6 +198,8 @@ Odin_ROS_Driver/                // ROS1/ROS2 driver package
         pcd2depth_ros.cpp       //Source code for pcd2depth_ros
         pcd2depth_ros2.cpp      //Source code for pcd2depth_ros2
         pointcloud_depth_converter.cpp //Source code for pointcloud_depth_converter
+        cloud_reprojection_ros.cpp //Source code for cloud reprojection node (ROS1/ROS2)
+        cloud_reprojector.cpp   //Core logic for cloud reprojection
     lib/
         liblydHostApi_amd.a     // Static library for AMD platform
         liblydHostApi_arm.a     // Static library for ARM platform
@@ -211,6 +213,8 @@ Odin_ROS_Driver/                // ROS1/ROS2 driver package
         depth_image_ros_node.hpp // depth_image_ros_node
         depth_image_ros2_node.hpp // depth_image_ros2_node
         pointcloud_depth_converter.hpp // pointcloud_depth_convert
+        cloud_reprojection_ros_node.hpp // cloud_reprojection_ros_node (ROS1/ROS2)
+        cloud_reprojector.hpp   // Core class for cloud reprojection
     config/
         control_command.yaml    // Control parameter file for driver
         calib.yaml              // Machine calibration yaml，differ for each individual device. Retrieved from the device everytime it connects to ROS driver
@@ -255,6 +259,7 @@ Internal parameters of the Odin ROS driver are defined in config/control_command
 | tf                            | sendodom          | tf tree Topic |
 | odin1/depth_img_competetion   | senddepth         | Dense depth image Topic. Demo, high computing power required. One-to-one with odin1/image_undistort. To utilize the data please directly subscribe to this topic instead of echoing it. Original value is already depth data, no need for further convert. |
 | odin1/depth_img_competetion_cloud  | senddepth         | Dense Depth_Cloud Topic. Demo, high computing power required |
+| odin1/reprojected_image       | sendreprojection  | Reprojected cloud to image Topic. Projects cloud_slam to camera image using odometry. Processed on host device. |
 
 ### 4.4 Data format
 
@@ -310,6 +315,7 @@ float32 rgb           // RGB value
 
 |control_command.yaml   | Detailed Description |
 |-----------------------|----------------------|
+| use_host_ros_time     | Time synchronization mode: 0 - use odin internal system time as data timestamp (typical and recommended); 1 - use host ROS time upon receive (not recommended for most users); 2 - align odin1 time to host time via NTP-like synchronization, timestamp is the sensor data reception time on host time axis. |
 | strict_usb3.0_check   | Strict USB3.0 check, if off, allow connection even if usb connection is below usb 3.0 |
 | recorddata            | Record data in specific format that can be imported into MindCloud(TM) for post-processing. Please be aware that this will consume a lot of storage space. Testing shows 9.5G for 10mins of data. |
 | devstatuslog          | Device status logging, currently save device status (soc temperature, cpu usage, ram usage, dtof sensor temp .etc) and data tx & rx rate to devstatus.csv under log folder. A new file will be created every time the driver is started. |

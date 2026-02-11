@@ -79,6 +79,7 @@ public:
         //cloud_writer_ = std::make_unique<Writer>(root_dir_ / "OdinPointCloud.olx", opts.batch_size);
         image_writer_ = std::make_unique<Writer>(root_dir_ / "OdinImage.bin", opts.batch_size);
         roatation_writer_ = std::make_unique<Writer>(root_dir_ / "OdinRotate.bin", opts.batch_size);
+        imu_writer_ = std::make_unique<Writer>(root_dir_ / "OdinIMU.bin", opts.batch_size);
     }
 
     ~BinaryDataLogger() {
@@ -87,6 +88,7 @@ public:
         if (cloud_writer_) cloud_writer_->shutdown();
         if (image_writer_) image_writer_->shutdown();
         if (roatation_writer_) roatation_writer_->shutdown();
+        if (imu_writer_) imu_writer_->shutdown();
     }
 
     const std::filesystem::path& root_dir() const { return root_dir_; }
@@ -103,6 +105,9 @@ public:
     }
     void enqueueRotateFrame(std::vector<uint8_t>&& blob) {
         if (roatation_writer_) roatation_writer_->enqueue(std::move(blob));
+    }
+    void enqueueIMUFrame(std::vector<uint8_t>&& blob) {
+        if (imu_writer_) imu_writer_->enqueue(std::move(blob));
     }
 
 private:
@@ -194,4 +199,5 @@ private:
     std::unique_ptr<Writer> cloud_writer_;
     std::unique_ptr<Writer> image_writer_;
     std::unique_ptr<Writer> roatation_writer_;
+    std::unique_ptr<Writer> imu_writer_;
 };
