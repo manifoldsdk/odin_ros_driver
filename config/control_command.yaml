@@ -55,12 +55,12 @@ register_keys:
 
   # cloud reprojection demo, projects cloud_slam to camera image using odometry
   # Processed on host device
-  sendreprojection: 1    # 0: off; 1: on
+  sendreprojection: 0    # 0: off; 1: on
 
   # record rgb, odometry, and slam cloud data as proprietary olx format for further processing in MindCloud(TM) software. 
   # save path: ws/src/odin_ros_driver/recorddata/{record_start_time}/
   # ATTENTION: please copy the full folder for post-processing.
-  recorddata: 1           # 0: off; 1: on
+  recorddata: 0           # 0: off; 1: on
 
   # Save device runtime status info to ws/src/odin_ros_driver/log/Driver_{drvier_start_time}/Conn_{device_connection_time}/dev_status.csv
   devstatuslog: 1         # 0: off; 1: on.
