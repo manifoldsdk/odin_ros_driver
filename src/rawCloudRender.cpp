@@ -11,6 +11,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+/**
+ * @file rawCloudRender.cpp
+ * @brief 原始点云染色渲染模块，从 YAML 文件加载相机内外参，
+ *        将激光雷达点云通过鱼眼相机模型投影到图像平面并赋予颜色，
+ *        输出带颜色信息的平坦点云数组。
+ */
+
 #include "rawCloudRender.h"
 #include <yaml-cpp/yaml.h>
 #include <iostream>
@@ -46,6 +53,8 @@ namespace GlobalCameraParams {
     Eigen::Matrix4f g_T_camera_lidar = Eigen::Matrix4f::Identity();
 }
 bool raw_debug=0;
+
+/// 从指定 YAML 文件加载相机内参（焦距、主点、畸变系数）及外参变换矩阵，初始化全局相机参数
 bool rawCloudRender::init(const std::string& yamlFilePath) {
     YAML::Node config;
     try {
@@ -123,10 +132,11 @@ bool rawCloudRender::init(const std::string& yamlFilePath) {
     
     return true;
 }
-void rawCloudRender::render(std::vector<std::vector<float>>& rgb_image, 
-                           capture_Image_List_t* pcd_stream, 
-                           int pcdIdx, 
-                           std::vector<float>& rgbCloud_flat) 
+/// 将点云数据投影到 RGB 图像，为每个有效点查找对应像素颜色，输出带颜色的平坦点云数组
+void rawCloudRender::render(std::vector<std::vector<float>>& rgb_image,
+                           capture_Image_List_t* pcd_stream,
+                           int pcdIdx,
+                           std::vector<float>& rgbCloud_flat)
 {
     // Initialize constants
     constexpr float inv_1000 = 0.001f;
@@ -272,6 +282,7 @@ void rawCloudRender::render(std::vector<std::vector<float>>& rgb_image,
 			  << (100.0 * valid_count / total_points) << "%)" << std::endl;
          }
 }
+/// 打印当前相机标定参数（内参、外参、畸变系数）到标准输出，用于调试验证
 void rawCloudRender::print_camera_calib() {
     std::cout << model_type_ << std::endl;
     std::cout << image_width_ << std::endl;

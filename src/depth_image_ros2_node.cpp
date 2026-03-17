@@ -11,9 +11,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+/**
+ * @file depth_image_ros2_node.cpp
+ * @brief 深度图像 ROS2 节点，订阅原始点云与彩色图像，
+ *        利用相机内外参将点云投影为深度图及带色彩的点云并发布。
+ */
+
 #include "depth_image_ros2_node.hpp"
 #include <functional>
 
+/// 构造函数，声明 ROS2 参数并加载相机标定参数，初始化深度转换器
 DepthImageRos2Node::DepthImageRos2Node(const rclcpp::NodeOptions & options)
     : Node("depth_image_ros2_node", options)
 {
@@ -35,6 +42,7 @@ DepthImageRos2Node::DepthImageRos2Node(const rclcpp::NodeOptions & options)
                        << "\n  depth_cloud_topic: " << depth_cloud_topic_);
 }
 
+/// 初始化订阅者、时间同步器、图像传输发布者及点云发布者
 void DepthImageRos2Node::initialize()
 {
     cloud_sub_.subscribe(this, cloud_raw_topic_);
@@ -52,6 +60,7 @@ void DepthImageRos2Node::initialize()
     RCLCPP_INFO(this->get_logger(), "DepthImageRos2Node initialized successfully");
 }
 
+/// 从 ROS2 参数服务器读取相机内参、畸变系数及外参矩阵，返回相机参数结构体
 PointCloudToDepthConverter::CameraParams DepthImageRos2Node::loadCameraParams()
 {
     PointCloudToDepthConverter::CameraParams params;
@@ -109,6 +118,7 @@ PointCloudToDepthConverter::CameraParams DepthImageRos2Node::loadCameraParams()
     return params;
 }
 
+/// 点云与彩色图像同步回调，执行投影处理并发布深度图和彩色点云
 void DepthImageRos2Node::syncCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud_msg,
                                      // const sensor_msgs::msg::CompressedImage::ConstSharedPtr image_msg,
                                      const sensor_msgs::msg::Image::ConstSharedPtr color_msg)
@@ -151,6 +161,7 @@ void DepthImageRos2Node::syncCallback(const sensor_msgs::msg::PointCloud2::Const
     publishDepthCloud(result.colored_cloud, cloud_msg->header);
 }
 
+/// 将 OpenCV 深度图像封装为 ROS2 消息并通过 image_transport 发布
 void DepthImageRos2Node::publishDepthImage(const cv::Mat &img,
                                           const std_msgs::msg::Header &header,
                                           const std::string &encoding)
@@ -159,6 +170,7 @@ void DepthImageRos2Node::publishDepthImage(const cv::Mat &img,
     depth_image_pub_.publish(*depth_msg);
 }
 
+/// 将带色彩的 PCL 点云转换为 ROS2 PointCloud2 消息并发布
 void DepthImageRos2Node::publishDepthCloud(const pcl::PointCloud<pcl::PointXYZRGB> &colored_cloud,
                                           const std_msgs::msg::Header &header)
 {

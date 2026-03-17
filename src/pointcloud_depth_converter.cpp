@@ -11,10 +11,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+/**
+ * @file pointcloud_depth_converter.cpp
+ * @brief 点云到深度图转换器，利用鱼眼相机模型将点云投影为深度图，
+ *        并生成对应的带色彩点云，支持畸变校正映射表的预计算。
+ */
+
 #include "pointcloud_depth_converter.hpp"
 #include <cmath>
 #include <iostream>
 
+/// 构造函数，保存相机参数并预计算内参矩阵及畸变映射表
 PointCloudToDepthConverter::PointCloudToDepthConverter(const CameraParams &params)
     : params_(params)
 {
@@ -22,6 +29,7 @@ PointCloudToDepthConverter::PointCloudToDepthConverter(const CameraParams &param
     createDistortionMaps();
 }
 
+/// 根据相机参数初始化缩放后的图像尺寸、内参矩阵 K 及相机-激光雷达联合投影矩阵 Kcl
 void PointCloudToDepthConverter::initializeInternalParams()
 {
     scaled_width_ = static_cast<int>(params_.image_width / params_.scale);
@@ -47,6 +55,7 @@ void PointCloudToDepthConverter::initializeInternalParams()
     Kcl_ = K_4x4_ * params_.Tcl;
 }
 
+/// 预计算正向和反向鱼眼畸变映射表，供图像去畸变和反投影使用
 void PointCloudToDepthConverter::createDistortionMaps()
 {
     map_x_ = cv::Mat::zeros(params_.image_height, params_.image_width, CV_32FC1);
@@ -100,6 +109,7 @@ void PointCloudToDepthConverter::createDistortionMaps()
     }
 }
 
+/// 处理输入点云与彩色图像：验证输入、投影点云生成深度图、后处理并生成带色彩点云
 PointCloudToDepthConverter::ProcessResult PointCloudToDepthConverter::processCloudAndImage(
     const pcl::PointCloud<pcl::PointXYZ> &cloud,
     const cv::Mat &image)
@@ -137,6 +147,7 @@ PointCloudToDepthConverter::ProcessResult PointCloudToDepthConverter::processClo
     return result;
 }
 
+/// 将相机坐标系下的点云投影到缩放深度图，并对每个有效点的邻域进行填充
 cv::Mat PointCloudToDepthConverter::projectCloudToDepth(const pcl::PointCloud<pcl::PointXYZ> &cloud_in_cam)
 {
     cv::Mat depth_img = cv::Mat::zeros(scaled_height_, scaled_width_, CV_32FC1);
@@ -174,6 +185,7 @@ cv::Mat PointCloudToDepthConverter::projectCloudToDepth(const pcl::PointCloud<pc
     return depth_img;
 }
 
+/// 对深度图进行上采样并通过 Sobel 梯度掩码去除深度不连续边缘噪声
 cv::Mat PointCloudToDepthConverter::postProcessDepthImage(const cv::Mat &depth_img) {
     if (depth_img.empty()) {
         std::cerr << "ERROR: Input depth image is empty!" << std::endl;
@@ -257,6 +269,7 @@ cv::Mat PointCloudToDepthConverter::postProcessDepthImage(const cv::Mat &depth_i
     return depth_img_upsampled;
 }
 
+/// 自定义最近邻插值缩放，仅支持单通道浮点图像，避免跨越深度边界的插值污染
 cv::Mat PointCloudToDepthConverter::customResize(const cv::Mat& src, const cv::Size& size) {
     if (src.empty()) {
         throw std::runtime_error("Source image is empty");
@@ -291,6 +304,7 @@ cv::Mat PointCloudToDepthConverter::customResize(const cv::Mat& src, const cv::S
     
     return dst;
 }
+/// 从深度图和彩色图像反投影生成带颜色的三维点云，坐标转回激光雷达坐标系
 pcl::PointCloud<pcl::PointXYZRGB> PointCloudToDepthConverter::generateColoredCloud(
     const cv::Mat &depth_img, const cv::Mat &color_img)
 {
@@ -347,6 +361,7 @@ pcl::PointCloud<pcl::PointXYZRGB> PointCloudToDepthConverter::generateColoredClo
     return cloud_colored;
 }
 
+/// 验证输入点云和图像是否有效，以及相机内参是否合法，返回验证结果和错误描述
 std::pair<bool, std::string> PointCloudToDepthConverter::validateInputs(
     const pcl::PointCloud<pcl::PointXYZ> &cloud, const cv::Mat &image)
 {
@@ -368,6 +383,7 @@ std::pair<bool, std::string> PointCloudToDepthConverter::validateInputs(
     return {true, ""};
 }
 
+/// 更新相机参数并重新初始化内参矩阵和畸变映射表
 void PointCloudToDepthConverter::updateCameraParams(const CameraParams &params)
 {
     params_ = params;

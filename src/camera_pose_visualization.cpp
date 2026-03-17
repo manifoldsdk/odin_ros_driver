@@ -11,6 +11,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+/**
+ * @file camera_pose_visualization.cpp
+ * @brief 相机位姿可视化模块，生成 RViz MarkerArray 消息，
+ *        以线框形式显示相机图像边界和光心连线，支持 ROS1 和 ROS2。
+ */
+
 #include "camera_pose_visualization.h"
 
 const Eigen::Vector3d camera_pose_visualization::imlt = Eigen::Vector3d(-1.0, -0.5, 1.0);
@@ -28,12 +34,14 @@ using GeometryPoint = geometry_msgs::msg::Point;
 using GeometryPoint = geometry_msgs::Point;
 #endif
 
+/// 将 Eigen 三维向量转换为 geometry_msgs::Point（兼容 ROS1/ROS2）
 void Eigen2Point(const Eigen::Vector3d& v, GeometryPoint& p) {
     p.x = v.x();
     p.y = v.y();
     p.z = v.z();
 }
 
+/// 构造函数，初始化图像边界和光心连线的颜色（RGBA）及默认比例尺、线宽
 camera_pose_visualization::camera_pose_visualization(float r, float g, float b, float a)
     : m_marker_ns("camera_pose_visualization"), m_scale(0.3), m_line_width(0.03) {
     m_image_boundary_color.r = r;
@@ -46,6 +54,7 @@ camera_pose_visualization::camera_pose_visualization(float r, float g, float b, 
     m_optical_center_connector_color.a = a;
 }
 
+/// 设置图像边界线框的颜色（RGBA）
 void camera_pose_visualization::setImageBoundaryColor(float r, float g, float b, float a) {
     m_image_boundary_color.r = r;
     m_image_boundary_color.g = g;
@@ -53,6 +62,7 @@ void camera_pose_visualization::setImageBoundaryColor(float r, float g, float b,
     m_image_boundary_color.a = a;
 }
 
+/// 设置光心连线的颜色（RGBA）
 void camera_pose_visualization::setOpticalCenterConnectorColor(float r, float g, float b, float a) {
     m_optical_center_connector_color.r = r;
     m_optical_center_connector_color.g = g;
@@ -60,12 +70,15 @@ void camera_pose_visualization::setOpticalCenterConnectorColor(float r, float g,
     m_optical_center_connector_color.a = a;
 }
 
+/// 设置相机模型的整体比例尺
 void camera_pose_visualization::setScale(double s) {
     m_scale = s;
 }
+/// 设置线框的线宽
 void camera_pose_visualization::setLineWidth(double width) {
     m_line_width = width;
 }
+/// 添加一条普通连线 Marker（绿色线段），连接两个三维点
 void camera_pose_visualization::add_edge(const Eigen::Vector3d& p0, const Eigen::Vector3d& p1) {
     Marker marker;
 
@@ -94,6 +107,7 @@ void camera_pose_visualization::add_edge(const Eigen::Vector3d& p0, const Eigen:
     m_markers.push_back(marker);
 }
 
+/// 添加一条回环边 Marker（紫红色粗线段），用于标记闭环约束
 void camera_pose_visualization::add_loopedge(const Eigen::Vector3d& p0, const Eigen::Vector3d& p1) {
     Marker marker;
 
@@ -125,6 +139,7 @@ void camera_pose_visualization::add_loopedge(const Eigen::Vector3d& p0, const Ei
 }
 
 
+/// 根据位置和姿态四元数，添加相机位姿线框 Marker（图像边界 + 光心连线）
 void camera_pose_visualization::add_pose(const Eigen::Vector3d& p, const Eigen::Quaterniond& q) {
     Marker marker;
 
@@ -216,10 +231,12 @@ void camera_pose_visualization::add_pose(const Eigen::Vector3d& p, const Eigen::
     m_markers.push_back(marker);
 }
 
+/// 清空所有已缓存的 Marker，重置可视化状态
 void camera_pose_visualization::reset() {
     m_markers.clear();
 }
 
+/// 将所有缓存的 Marker 填充时间戳后，通过指定发布者发布 MarkerArray 消息
 void camera_pose_visualization::publish_by( Publisher& pub, const Header& header ) {
     MarkerArray markerArray_msg;
 

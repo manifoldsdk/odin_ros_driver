@@ -2,18 +2,20 @@
 <package format="3">
   <name>odin_ros_driver</name>
   <version>0.0.1</version>
-  <description>ROS2 driver for Odin sensor</description>
+  <description>Odin 传感器 ROS2 驱动包，适配 Ubuntu 22.04 + ROS2 Humble</description>
   <maintainer email="oliveiratang@manifoldtech.cn">rlk</maintainer>
   <license>Apache 2.0</license>
-  <!-- ROS2 uses colcon as the build tool -->
+
+  <!-- ROS2 构建工具 -->
   <buildtool_depend>ament_cmake</buildtool_depend>
-  <!-- ROS2 dependencies -->
+
+  <!-- ROS2 核心依赖 -->
   <depend>rclcpp</depend>
-  <!-- System dependencies -->
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
   <depend>cv_bridge</depend>
   <depend>image_transport</depend>
   <depend>pcl_conversions</depend>
@@ -21,8 +23,8 @@
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>
-  <!-- Specify build type as ament -->
-  <export>  
-    <build_type>ament_cmake</build_type>  
-  </export> 
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
 </package>

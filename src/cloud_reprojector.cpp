@@ -11,13 +11,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+/**
+ * @file cloud_reprojector.cpp
+ * @brief 点云重投影核心算法，利用鱼眼相机模型将里程计坐标系下的彩色点云
+ *        变换到相机坐标系并投影到图像平面，生成彩色重投影图像。
+ */
+
 #include "cloud_reprojector.hpp"
 #include <cmath>
 
+/// 默认构造函数，等待调用 initialize() 后方可使用
 CloudReprojector::CloudReprojector()
 {
 }
 
+/// 初始化相机内参和外参，创建鱼眼相机模型，验证参数合法性
 bool CloudReprojector::initialize(const CameraParams& cam_params, const ExtrinsicParams& ext_params)
 {
     camera_params_ = cam_params;
@@ -42,6 +50,7 @@ bool CloudReprojector::initialize(const CameraParams& cam_params, const Extrinsi
     return true;
 }
 
+/// 由相机-激光雷达变换矩阵 Tcl 和激光雷达-IMU 变换矩阵 Til 计算相机-IMU 变换矩阵 Tic
 Eigen::Matrix4d CloudReprojector::calculateTic(const Eigen::Matrix4d& Tcl, const Eigen::Matrix4d& Til)
 {
     // Tic = Til * Tlc = Til * Tcl.inverse()
@@ -49,6 +58,7 @@ Eigen::Matrix4d CloudReprojector::calculateTic(const Eigen::Matrix4d& Tcl, const
     return Til * Tlc;
 }
 
+/// 将里程计位姿（四元数 + 平移向量）转换为 4x4 齐次变换矩阵
 Eigen::Matrix4d CloudReprojector::odomPoseToMatrix(const OdomPose& odom) const
 {
     Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
@@ -59,6 +69,7 @@ Eigen::Matrix4d CloudReprojector::odomPoseToMatrix(const OdomPose& odom) const
     return T;
 }
 
+/// 根据里程计位姿将里程计坐标系点云变换到相机坐标系，并调用投影函数生成图像
 cv::Mat CloudReprojector::reprojectCloud(const pcl::PointCloud<pcl::PointXYZRGB>& cloud_odom,
                                           const OdomPose& odom_pose)
 {
@@ -85,6 +96,7 @@ cv::Mat CloudReprojector::reprojectCloud(const pcl::PointCloud<pcl::PointXYZRGB>
     return projectCloudToImage(cloud_in_cam);
 }
 
+/// 将相机坐标系下的彩色点云通过鱼眼相机模型投影到图像平面，以圆点绘制每个有效点
 cv::Mat CloudReprojector::projectCloudToImage(const pcl::PointCloud<pcl::PointXYZRGB>& cloud_in_cam) const
 {
     cv::Mat img = cv::Mat::zeros(camera_params_.image_height, camera_params_.image_width, CV_8UC3);

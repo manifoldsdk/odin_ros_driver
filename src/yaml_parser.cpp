@@ -11,6 +11,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+/**
+ * @file yaml_parser.cpp
+ * @brief YAML 配置文件解析器，负责读取驱动配置参数、寄存器键值及自定义参数，
+ *        并将其应用到设备句柄上。支持整型、浮点数组等多种参数类型。
+ */
+
 #include "yaml_parser.h"
 #include <fstream>
 #include <filesystem>
@@ -21,9 +27,11 @@ limitations under the License.
 #include <cstring>
 namespace odin_ros_driver {
 
+/// 构造函数，保存配置文件路径
 YamlParser::YamlParser(const std::string& config_file)
     : config_file_(config_file) {}
 
+/// 解析 YAML 配置文件，加载所有寄存器键值及自定义参数
 bool YamlParser::loadConfig() {
     try {
         std::cerr << "Loading config file: " << config_file_ << std::endl;
@@ -152,18 +160,22 @@ bool YamlParser::loadConfig() {
     }
 }
 
+/// 返回已加载的整型寄存器键值映射表
 const std::map<std::string, int>& YamlParser::getRegisterKeys() const {
     return register_keys_;
 }
 
+/// 返回已加载的自定义参数映射表（支持整型和浮点数组）
 const std::map<std::string, ParameterValue>& YamlParser::getCustomParameters() const {
     return custom_parameters_;
 }
 
+/// 返回已加载的字符串类型寄存器键值映射表
 const std::map<std::string, std::string>& YamlParser::getRegisterKeysStrVal() const {
     return register_keys_str_val_;
 }
 
+/// 打印当前所有已加载配置参数（整型、字符串型、自定义参数）到标准错误输出
 void YamlParser::printConfig() const {
     std::cerr << "Configuration Keys:" << std::endl;
     if (register_keys_.empty()) {
@@ -206,6 +218,7 @@ void YamlParser::printConfig() const {
     }
 }
 
+/// 将所有自定义参数逐一写入设备，返回是否全部成功
 bool YamlParser::applyCustomParameters(device_handle device) {
     bool success = true;
 
@@ -224,6 +237,7 @@ bool YamlParser::applyCustomParameters(device_handle device) {
     return success;
 }
 
+/// 按名称获取整型自定义参数值，若不存在则返回默认值
 int YamlParser::getCustomParameterInt(const std::string& param_name, int default_value) const {
     auto it = custom_parameters_.find(param_name);
     if (it != custom_parameters_.end()) {
