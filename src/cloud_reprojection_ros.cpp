@@ -92,15 +92,24 @@ void CloudReprojectionRosNode::loadParameters()
     wiwc_topic_ = this->get_parameter("wiwc_topic").as_string();
     reprojected_image_topic_ = this->get_parameter("reprojected_image_topic").as_string();
 
-    // Load camera parameters from calib.yaml file directly
+    // Load camera parameters from per-device calib file
     std::string package_path = get_package_source_directory();
-    std::string calib_file = package_path + "/config/calib.yaml";
-    
+    std::string default_calib = package_path + "/config/calib.yaml";
+    this->declare_parameter<std::string>("calib_file_path", default_calib);
+    std::string calib_file = this->get_parameter("calib_file_path").as_string();
+
+    RCLCPP_INFO(this->get_logger(), "Waiting for calib file: %s", calib_file.c_str());
+    while (rclcpp::ok() && !fileExists(calib_file)) {
+        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                             "Still waiting for calib file: %s", calib_file.c_str());
+        rclcpp::sleep_for(std::chrono::milliseconds(500));
+    }
+
     YAML::Node calib_config;
     try {
         calib_config = YAML::LoadFile(calib_file);
     } catch (const std::exception& e) {
-        RCLCPP_ERROR(this->get_logger(), "Failed to load calib.yaml: %s", e.what());
+        RCLCPP_ERROR(this->get_logger(), "Failed to load calib file %s: %s", calib_file.c_str(), e.what());
         rclcpp::shutdown();
         return;
     }

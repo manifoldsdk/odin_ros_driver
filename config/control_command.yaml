@@ -20,7 +20,7 @@ register_keys:
   # undistort rgb image processed from decoded rgb data.
   # depends on sendrgb. related camera parameters can be found in ws/src/odin_ros_driver/config/calib.yaml
   # Processed on host device
-  sendrgbundistort: 0    # 0: off; 1: on.
+  sendrgbundistort: 1    # 0: off; 1: on.
 
   # IMU data
   sendimu: 1              # 0: off; 1: on
@@ -59,7 +59,7 @@ register_keys:
   # depth completion demo, high computing resource usage. 
   # for more information please refer to the readme file.
   # Processed on host device
-  senddepth: 0            # 0: off; 1: on
+  senddepth: 1            # 0: off; 1: on
 
   # cloud reprojection demo, projects cloud_slam to camera image using odometry
   # Processed on host device
@@ -84,7 +84,7 @@ register_keys:
   save_log: 0 # 0: off; 1: on; 
 
   # raw dtof sensor intensity data in gray format, mostly for debug purpose.
-  pubintensitygray: 0     # 0: off; 1: on
+  pubintensitygray: 1     # 0: off; 1: on
 
   showpath: 0             # 0: off; 1: on
   showcamerapose: 0       # 0: off; 1: on

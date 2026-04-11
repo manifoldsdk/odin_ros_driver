@@ -59,7 +59,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /odin1/image
+        Value: /odin1_0/image
       Value: true
     - Class: rviz_default_plugins/Image
       Enabled: false
@@ -73,7 +73,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /odin1/image/undistorted
+        Value: /odin1_0/image/undistorted
       Value: false
     - Class: rviz_default_plugins/Image
       Enabled: false
@@ -87,7 +87,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /odin1/reprojected_image
+        Value: /odin1_0/reprojected_image
       Value: false
     - Alpha: 1
       Autocompute Intensity Bounds: true
@@ -119,7 +119,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /odin1/cloud_raw
+        Value: /odin1_0/cloud_raw
       Use Fixed Frame: true
       Use rainbow: true
       Value: false
@@ -153,7 +153,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /odin1/cloud_render
+        Value: /odin1_0/cloud_render
       Use Fixed Frame: true
       Use rainbow: true
       Value: false
@@ -196,7 +196,7 @@ Visualization Manager:
             Filter size: 10
             History Policy: Keep Last
             Reliability Policy: Reliable
-            Value: /odin1/odometry
+            Value: /odin1_0/odometry
           Value: true
         - Angle Tolerance: 0.10000000149011612
           Class: rviz_default_plugins/Odometry
@@ -235,7 +235,7 @@ Visualization Manager:
             Filter size: 10
             History Policy: Keep Last
             Reliability Policy: Reliable
-            Value: /odin1/odometry_highfreq
+            Value: /odin1_0/odometry_highfreq
           Value: false
         - Class: rviz_default_plugins/MarkerArray
           Enabled: false
@@ -247,7 +247,7 @@ Visualization Manager:
             Durability Policy: Volatile
             History Policy: Keep Last
             Reliability Policy: Reliable
-            Value: /odin1/camera_pose_visual
+            Value: /odin1_0/camera_pose_visual
           Value: false
       Enabled: true
       Name: Odometry
@@ -283,7 +283,7 @@ Visualization Manager:
             Filter size: 10
             History Policy: Keep Last
             Reliability Policy: Reliable
-            Value: /odin1/cloud_slam
+            Value: /odin1_0/cloud_slam
           Use Fixed Frame: true
           Use rainbow: true
           Value: true
@@ -317,7 +317,7 @@ Visualization Manager:
             Filter size: 10
             History Policy: Keep Last
             Reliability Policy: Reliable
-            Value: /odin1/cloud_slam
+            Value: /odin1_0/cloud_slam
           Use Fixed Frame: true
           Use rainbow: true
           Value: false
@@ -331,7 +331,7 @@ Visualization Manager:
             Durability Policy: Volatile
             History Policy: Keep Last
             Reliability Policy: Reliable
-            Value: /odin1/path
+            Value: /odin1_0/path
           Value: false
       Enabled: true
       Name: slam
@@ -349,7 +349,7 @@ Visualization Manager:
             Durability Policy: Volatile
             History Policy: Keep Last
             Reliability Policy: Reliable
-            Value: /odin1/depth_img_competetion
+            Value: /odin1_0/depth_img_competetion
           Value: true
         - Alpha: 1
           Autocompute Intensity Bounds: true
@@ -381,7 +381,7 @@ Visualization Manager:
             Filter size: 10
             History Policy: Keep Last
             Reliability Policy: Reliable
-            Value: /odin1/depth_img_competetion_cloud
+            Value: /odin1_0/depth_img_competetion_cloud
           Use Fixed Frame: true
           Use rainbow: true
           Value: false
@@ -392,9 +392,9 @@ Visualization Manager:
       Frame Timeout: 15
       Frames:
         All Enabled: true
-        odin1_base_link:
+        odin1_base_link_0:
           Value: true
-        odom:
+        odom_0:
           Value: true
       Marker Scale: 1
       Name: TF
@@ -402,15 +402,15 @@ Visualization Manager:
       Show Axes: true
       Show Names: false
       Tree:
-        odom:
-          odin1_base_link:
+        odom_0:
+          odin1_base_link_0:
             {}
       Update Interval: 0
       Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: odom
+    Fixed Frame: odom_0
     Frame Rate: 30
   Name: root
   Tools:
@@ -469,7 +469,7 @@ Visualization Manager:
       Name: Current View
       Near Clip Distance: 0.009999999776482582
       Pitch: 0.3953983187675476
-      Target Frame: odom
+      Target Frame: odom_0
       Value: Orbit (rviz)
       Yaw: 3.230407953262329
     Saved: ~

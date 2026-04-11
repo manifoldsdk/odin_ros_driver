@@ -1,7 +1,13 @@
 <launch>
     <!-- 
-        Usage: roslaunch odin_ros_driver odin1_ros1.launch
+        Usage: 
+            Single device:  roslaunch odin_ros_driver odin1_ros1.launch
+            Two devices:    roslaunch odin_ros_driver odin1_ros1.launch num_devices:=2
+            Or use wrapper: ./src/odin_ros_driver/script/launch_ros1.sh (auto-detects devices)
     -->
+    
+    <!-- Number of devices to launch nodes for -->
+    <arg name="num_devices" default="1"/>
     
     <!-- Set node name -->
     <arg name="node_name" default="host_sdk_sample"/>
@@ -17,20 +23,87 @@
         <param name="config_file" value="$(arg config_file)"/>
     </node>
 
-    <node pkg="odin_ros_driver" type="pcd2depth_node" name="pcd2depth_node" output="screen" >
+    <!-- Device 0 nodes -->
+    <node pkg="odin_ros_driver" type="pcd2depth_node" name="pcd2depth_node_0" output="screen" >
         <rosparam command="load" file="$(find odin_ros_driver)/config/control_command.yaml"/>
-        <param name="calib_file_path" value="$(find odin_ros_driver)/config/calib.yaml"/>
+        <param name="calib_file_path" value="$(find odin_ros_driver)/config/calib_cam0.yaml"/>
+        <param name="cloud_raw_topic" value="/odin1_0/cloud_raw"/>
+        <param name="color_raw_topic" value="/odin1_0/image"/>
+        <param name="depth_image_topic" value="/odin1_0/depth_img_competetion"/>
+        <param name="depth_cloud_topic" value="/odin1_0/depth_img_competetion_cloud"/>
     </node>
 
-    <node pkg="odin_ros_driver" type="cloud_reprojection_node" name="cloud_reprojection_node" output="screen" >
+    <node pkg="odin_ros_driver" type="cloud_reprojection_node" name="cloud_reprojection_node_0" output="screen" >
         <rosparam command="load" file="$(find odin_ros_driver)/config/control_command.yaml"/>
-        <param name="calib_file_path" value="$(find odin_ros_driver)/config/calib.yaml"/>
+        <param name="calib_file_path" value="$(find odin_ros_driver)/config/calib_cam0.yaml"/>
+        <param name="cloud_slam_topic" value="/odin1_0/cloud_slam"/>
+        <param name="odometry_topic" value="/odin1_0/odometry"/>
+        <param name="wiwc_topic" value="/odin1_0/wiwc"/>
+        <param name="reprojected_image_topic" value="/odin1_0/reprojected_image"/>
     </node>
 
-    <!-- Image overlay node - overlays reprojected points on camera image -->
-    <node pkg="odin_ros_driver" type="image_overlay_node" name="image_overlay_node" output="screen" >
+    <node pkg="odin_ros_driver" type="image_overlay_node" name="image_overlay_node_0" output="screen" >
         <rosparam command="load" file="$(find odin_ros_driver)/config/control_command.yaml"/>
+        <param name="register_keys/overlay_reprojected_topic" value="/odin1_0/reprojected_image"/>
+        <param name="register_keys/overlay_camera_topic" value="/odin1_0/image/undistorted"/>
+        <param name="register_keys/overlay_output_topic" value="/odin1_0/overlay_image"/>
     </node>
+
+    <!-- Device 1 nodes (only launched if num_devices >= 2) -->
+    <group if="$(eval arg('num_devices') >= 2)">
+        <node pkg="odin_ros_driver" type="pcd2depth_node" name="pcd2depth_node_1" output="screen" >
+            <rosparam command="load" file="$(find odin_ros_driver)/config/control_command.yaml"/>
+            <param name="calib_file_path" value="$(find odin_ros_driver)/config/calib_cam1.yaml"/>
+            <param name="cloud_raw_topic" value="/odin1_1/cloud_raw"/>
+            <param name="color_raw_topic" value="/odin1_1/image"/>
+            <param name="depth_image_topic" value="/odin1_1/depth_img_competetion"/>
+            <param name="depth_cloud_topic" value="/odin1_1/depth_img_competetion_cloud"/>
+        </node>
+
+        <node pkg="odin_ros_driver" type="cloud_reprojection_node" name="cloud_reprojection_node_1" output="screen" >
+            <rosparam command="load" file="$(find odin_ros_driver)/config/control_command.yaml"/>
+            <param name="calib_file_path" value="$(find odin_ros_driver)/config/calib_cam1.yaml"/>
+            <param name="cloud_slam_topic" value="/odin1_1/cloud_slam"/>
+            <param name="odometry_topic" value="/odin1_1/odometry"/>
+            <param name="wiwc_topic" value="/odin1_1/wiwc"/>
+            <param name="reprojected_image_topic" value="/odin1_1/reprojected_image"/>
+        </node>
+
+        <node pkg="odin_ros_driver" type="image_overlay_node" name="image_overlay_node_1" output="screen" >
+            <rosparam command="load" file="$(find odin_ros_driver)/config/control_command.yaml"/>
+            <param name="register_keys/overlay_reprojected_topic" value="/odin1_1/reprojected_image"/>
+            <param name="register_keys/overlay_camera_topic" value="/odin1_1/image/undistorted"/>
+            <param name="register_keys/overlay_output_topic" value="/odin1_1/overlay_image"/>
+        </node>
+    </group>
+
+    <!-- Device 2 nodes (only launched if num_devices >= 3) -->
+    <group if="$(eval arg('num_devices') >= 3)">
+        <node pkg="odin_ros_driver" type="pcd2depth_node" name="pcd2depth_node_2" output="screen" >
+            <rosparam command="load" file="$(find odin_ros_driver)/config/control_command.yaml"/>
+            <param name="calib_file_path" value="$(find odin_ros_driver)/config/calib_cam2.yaml"/>
+            <param name="cloud_raw_topic" value="/odin1_2/cloud_raw"/>
+            <param name="color_raw_topic" value="/odin1_2/image"/>
+            <param name="depth_image_topic" value="/odin1_2/depth_img_competetion"/>
+            <param name="depth_cloud_topic" value="/odin1_2/depth_img_competetion_cloud"/>
+        </node>
+
+        <node pkg="odin_ros_driver" type="cloud_reprojection_node" name="cloud_reprojection_node_2" output="screen" >
+            <rosparam command="load" file="$(find odin_ros_driver)/config/control_command.yaml"/>
+            <param name="calib_file_path" value="$(find odin_ros_driver)/config/calib_cam2.yaml"/>
+            <param name="cloud_slam_topic" value="/odin1_2/cloud_slam"/>
+            <param name="odometry_topic" value="/odin1_2/odometry"/>
+            <param name="wiwc_topic" value="/odin1_2/wiwc"/>
+            <param name="reprojected_image_topic" value="/odin1_2/reprojected_image"/>
+        </node>
+
+        <node pkg="odin_ros_driver" type="image_overlay_node" name="image_overlay_node_2" output="screen" >
+            <rosparam command="load" file="$(find odin_ros_driver)/config/control_command.yaml"/>
+            <param name="register_keys/overlay_reprojected_topic" value="/odin1_2/reprojected_image"/>
+            <param name="register_keys/overlay_camera_topic" value="/odin1_2/image/undistorted"/>
+            <param name="register_keys/overlay_output_topic" value="/odin1_2/overlay_image"/>
+        </node>
+    </group>
     
     <!-- Launch RViz with configuration -->
     <node name="rviz" pkg="rviz" type="rviz" args="-d $(arg rviz_config)" output="screen"/>

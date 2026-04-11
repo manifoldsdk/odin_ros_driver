@@ -18,7 +18,7 @@ This driver package provides core functionality for point cloud SLAM application
 
 ## 1. Version
 
-Current version: v0.9.0
+Current version: v1.0.0
 
 Required device firmware version: v0.10.0
 
@@ -184,7 +184,7 @@ Note that relocalization performance is highly environment-dependent. In highly 
 
 If relocalization fails initially, the system will temporarily operate in a fallback SLAM mode (map saving is disabled in this state). During this time, you can freely move odin1. It will continue relocalization attempts in the background. Once successful, the TF between map and odom frames will be published. (Tip: Gently shaking or moving the device after initialization can help improve relocalization accuracy.)
 
-The following topics are published in the odom frame: `/odin1/cloud_slam, /odin1/odom, /odin1/highodom and /odin1/path`. To obtain these in the map frame, apply the TF from odom frame to map frame.
+The following topics are published in the odom frame: `/odin1_{N}/cloud_slam, /odin1_{N}/odometry, /odin1_{N}/odometry_highfreq and /odin1_{N}/path`. To obtain these in the map frame, apply the TF from odom_{N} frame to map_{N} frame.
 
 ## 4. File structure and data format
 ### 4.1 File structure
@@ -244,24 +244,27 @@ Odin_ROS_Driver/                // ROS1/ROS2 driver package
 
 
 ### 4.3 ROS topics
-Internal parameters of the Odin ROS driver are defined in config/control_command.yaml. Below are descriptions of the commonly used parameters:
+Internal parameters of the Odin ROS driver are defined in config/control_command.yaml. Below are descriptions of the commonly used parameters.
+
+**Topic naming convention:** Topics use the format `/odin1_{N}/topic_name`, where `N` is the device index (0, 1, 2, ...). For a single device setup, the prefix is `/odin1_0/`. For multi-device setups, each device gets its own namespace (e.g. `/odin1_0/`, `/odin1_1/`).
 
 | Topic               |control_command.yaml  | Detailed Description |
 |---------------------|----------------------|----------------------|
-| odin1/imu                     | sendimu           | Imu Topic |
-| odin1/image                   | sendrgb           | RGB Camera Topic, decoded from original jpeg data from device, bgr8 format |
-| odin1/image_undistort         | sendrgbundistort  | undistorted RGB Camera Topic, processed with calib.yaml from device |
-| odin1/image/compressed        | sendrgbcompressed | RGB Camera compressed Topic, original jpeg data from device |
-| odin1/cloud_raw               | senddtof          | Raw_Cloud Topic |
-| odin1/cloud_render            | sendcloudrender   | Render_Cloud Topic, processed with raw point cloud, rgb image, and calib.yaml from device |
-| odin1/cloud_slam              | sendcloudslam     | Slam_PointCloud Topic |
-| odin1/odometry                | sendodom          | Odom Topic |
-| odin1/odometry_high           | sendodom          | high frequency Odom Topic |
-| odin1/path                    | showpath          | Odom Path Topic |
-| tf                            | sendodom          | tf tree Topic |
-| odin1/depth_img_competetion   | senddepth         | Dense depth image Topic. Demo, high computing power required. One-to-one with odin1/image_undistort. To utilize the data please directly subscribe to this topic instead of echoing it. Original value is already depth data, no need for further convert. |
-| odin1/depth_img_competetion_cloud  | senddepth         | Dense Depth_Cloud Topic. Demo, high computing power required |
-| odin1/reprojected_image       | sendreprojection  | Reprojected cloud to image Topic. Projects cloud_slam to camera image using odometry. Processed on host device. |
+| odin1_{N}/imu                     | sendimu           | Imu Topic |
+| odin1_{N}/image                   | sendrgb           | RGB Camera Topic, decoded from original jpeg data from device, bgr8 format |
+| odin1_{N}/image/undistorted       | sendrgbundistort  | undistorted RGB Camera Topic, processed with calib.yaml from device |
+| odin1_{N}/image/compressed        | sendrgbcompressed | RGB Camera compressed Topic, original jpeg data from device |
+| odin1_{N}/cloud_raw               | senddtof          | Raw_Cloud Topic |
+| odin1_{N}/cloud_render            | sendcloudrender   | Render_Cloud Topic, processed with raw point cloud, rgb image, and calib.yaml from device |
+| odin1_{N}/cloud_slam              | sendcloudslam     | Slam_PointCloud Topic |
+| odin1_{N}/odometry                | sendodom          | Odom Topic |
+| odin1_{N}/odometry_highfreq       | sendodom          | high frequency Odom Topic |
+| odin1_{N}/path                    | showpath          | Odom Path Topic |
+| tf                                | sendodom          | tf tree Topic (frame: odom_{N} → odin1_base_link_{N}) |
+| odin1_{N}/depth_img_competetion   | senddepth         | Dense depth image Topic. Demo, high computing power required. One-to-one with odin1_{N}/image/undistorted. To utilize the data please directly subscribe to this topic instead of echoing it. Original value is already depth data, no need for further convert. |
+| odin1_{N}/depth_img_competetion_cloud  | senddepth    | Dense Depth_Cloud Topic. Demo, high computing power required |
+| odin1_{N}/reprojected_image       | sendreprojection  | Reprojected cloud to image Topic. Projects cloud_slam to camera image using odometry. Processed on host device. |
+| odin1_{N}/overlay_image           | sendreprojection  | Overlay of reprojected cloud on undistorted camera image. |
 
 ### 4.4 Data format
 
