@@ -85,9 +85,24 @@ private:
     std::string config_file_;
     std::map<std::string, int> register_keys_;
     std::map<std::string, std::string> register_keys_str_val_;
+    std::map<std::string, double> register_keys_float_val_;
     std::map<std::string, ParameterValue> custom_parameters_;
 
-    std::unordered_set<std::string> allowed_key_w_str_val = {"relocalization_map_abs_path", "mapping_result_dest_dir", "mapping_result_file_name", "image_mask_abs_path"};
+    // Keys whose YAML value is a string (not int).
+    std::unordered_set<std::string> allowed_key_w_str_val = {
+        "relocalization_map_abs_path",
+        "mapping_result_dest_dir",
+        "mapping_result_file_name",
+        "image_mask_abs_path",
+        "overlay_reprojected_topic",
+        "overlay_camera_topic",
+        "overlay_output_topic"
+    };
+
+    // Keys whose YAML value is a floating-point number (not int).
+    std::unordered_set<std::string> allowed_key_w_float_val = {
+        "overlay_alpha"
+    };
 };
 
 }

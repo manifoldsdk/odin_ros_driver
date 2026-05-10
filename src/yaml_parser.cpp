@@ -130,6 +130,14 @@ bool YamlParser::loadConfig() {
                 } catch (const std::exception& e) {
                     std::cerr << "Failed to parse key " << key << ": " << e.what() << std::endl;
                 }
+            } else if (allowed_key_w_float_val.find(key) != allowed_key_w_float_val.end()) {
+                try {
+                    double value = value_node.as<double>();
+                    register_keys_float_val_[key] = value;
+                    std::cerr << "Loaded key: " << key << " = " << value << std::endl;
+                } catch (const std::exception& e) {
+                    std::cerr << "Failed to parse key " << key << ": " << e.what() << std::endl;
+                }
             } else {
                 // Regular (non-custom) integer parameter
                 try {
