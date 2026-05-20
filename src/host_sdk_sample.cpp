@@ -60,6 +60,7 @@ static std::atomic<bool> deviceConnected(false);
 static std::atomic<bool> deviceDisconnected(false);  // Device disconnection flag
 static std::mutex device_mutex;                      // Device operation mutex lock
 static std::atomic<bool> g_connection_timeout(false);
+static std::atomic<bool> g_map_transfer_in_progress(false);  // True while a map file transfer is running
 static std::atomic<bool> g_usb_version_error(false);
 static std::atomic<bool> g_shutdown_requested(false);  // Signal handler flag
 #ifdef ROS2
@@ -113,7 +114,7 @@ double get_ptp_smoothed_offset() {
 
  // usb device
 static std::string TARGET_VENDOR = "2207";
-static std::string TARGET_PRODUCT = "0019";
+static std::string TARGET_PRODUCT = "001a";
 // Global configuration variables
 int g_sendrgb = 1;
 int g_sendimu = 1;
@@ -375,79 +376,15 @@ static void signal_handler(int signum) {
 }
 
 // Custom parameter monitoring function
+// Note: Map transfer is now triggered directly in process_command_file() when save_map=1 is set,
+// so this monitor no longer needs to detect state changes. It's kept for potential future use
+// or for monitoring other parameters.
 static void custom_parameter_monitor() {
-    int last_save_map_val = -1;
     while (g_param_monitor_running && deviceConnected) {
-        if (odinDevice) {
-            if (g_custom_map_mode == 1) {
-                int value = 0;
-                int result = lidar_get_custom_parameter(odinDevice, "save_map", &value);
-
-                if (result == 0) {
-                    // #ifdef ROS2
-                    //     RCLCPP_INFO(rclcpp::get_logger("param_monitor"), "save_map = %d", value);
-                    // #else
-                    //     ROS_INFO("save_map = %d", value);
-                    // #endif
-
-                    if (last_save_map_val == 1 && value == 0) {
-                        auto now = std::chrono::system_clock::now();
-                        std::time_t t = std::chrono::system_clock::to_time_t(now);
-                        std::tm tm{};
-                        #ifdef _WIN32
-                            localtime_s(&tm, &t);
-                        #else
-                            localtime_r(&t, &tm);
-                        #endif
-                        char map_save_time[32];
-                        std::strftime(map_save_time, sizeof(map_save_time), "%Y%m%d_%H%M%S", &tm);
-
-                        std::string map_dir = g_mapping_result_dest_dir != "" ? g_mapping_result_dest_dir : map_root_dir_.string();
-                        std::string map_name = g_mapping_result_file_name != "" ? g_mapping_result_file_name : "map_" + std::string(map_save_time) + ".bin";
-                        #ifdef ROS2
-                            RCLCPP_INFO(rclcpp::get_logger("param_monitor"), "Map is saved on device, now transfering to [%s/%s]", map_dir.c_str(), map_name.c_str());
-                        #else
-                            ROS_INFO("Map is saved on device, now transfering to [%s/%s]", map_dir.c_str(), map_name.c_str());
-                        #endif
-                        int ret = lidar_get_mapping_result(odinDevice, map_dir.c_str(), map_name.c_str());
-                        if (ret < 0 ) {
-                            #ifdef ROS2
-                                RCLCPP_WARN(rclcpp::get_logger("param_monitor"), "Failed to get mapping result");
-                            #else
-                                ROS_WARN("Failed to get mapping result");
-                            #endif
-                        } else if (ret == 0) {
-                            #ifdef ROS2
-                                RCLCPP_INFO(rclcpp::get_logger("param_monitor"), "map get start success, now transfering...");
-                            #else
-                                ROS_INFO("map get start success, now transfering...");
-                            #endif
-                        } else {
-                            #ifdef ROS2
-                                RCLCPP_WARN(rclcpp::get_logger("param_monitor"), "Failed to get mapping result, error code: %d", ret);
-                            #else
-                                ROS_WARN("Failed to get mapping result, error code: %d", ret);
-                            #endif
-                        }
-                    }
-                    last_save_map_val = value;
-
-                } else if (result == -2) {
-                    #ifdef ROS2
-                        RCLCPP_INFO(rclcpp::get_logger("param_monitor"),"file transfering, try again later...");
-                    #else
-                        ROS_INFO("file transfering, try again later...");
-                    #endif
-                } else {
-                    #ifdef ROS2
-                        RCLCPP_WARN(rclcpp::get_logger("param_monitor"),"Failed to get save_map parameter, error: %d", result);
-                    #else
-                        ROS_WARN("Failed to get save_map parameter, error: %d", result);
-                    #endif
-                }
-            }
-        }
-
+        // Currently no active monitoring needed since map transfer is triggered directly
+        // in process_command_file() when save_map=1 is set.
+        // This loop is kept for potential future parameter monitoring needs.
+        
         // Sleep for 1 second (1Hz)
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
@@ -497,14 +434,107 @@ static void process_command_file() {
             
             try {
                 int value = std::stoi(value_str);
-                int result = lidar_set_custom_parameter(odinDevice, param_name.c_str(), &value, sizeof(int));
+                
+                // Early reject: if a map transfer is already running, ignore new save_map=1 requests
+                // to avoid spurious "Successfully set save_map = 1" followed by background failure.
+                if (param_name == "save_map" && value == 1 && g_map_transfer_in_progress.load()) {
+                    #ifdef ROS2
+                        RCLCPP_WARN(rclcpp::get_logger("command_processor"),
+                                    "Map transfer already in progress, ignoring this save_map=1 request. Please wait for current transfer to complete.");
+                    #else
+                        ROS_WARN("Map transfer already in progress, ignoring this save_map=1 request. Please wait for current transfer to complete.");
+                    #endif
+                    return;
+                }
 
+                // Special handling for "save_map = 1": delegate the entire flow (set -> poll
+                // -> fetch) to the SDK's unified lidar_save_map() API. We deliberately skip
+                // the generic lidar_set_custom_parameter() call here, because lidar_save_map()
+                // already issues that set internally; doing it twice could re-trigger map
+                // generation on the device side after it already completed once.
+                if (param_name == "save_map" && value == 1) {
+                    #ifdef ROS2
+                        RCLCPP_INFO(rclcpp::get_logger("command_processor"),
+                                    "Successfully set %s = %d", param_name.c_str(), value);
+                    #else
+                        ROS_INFO("Successfully set %s = %d", param_name.c_str(), value);
+                    #endif
+                    {
+                        auto now = std::chrono::system_clock::now();
+                        std::time_t t = std::chrono::system_clock::to_time_t(now);
+                        std::tm tm{};
+                        #ifdef _WIN32
+                            localtime_s(&tm, &t);
+                        #else
+                            localtime_r(&t, &tm);
+                        #endif
+                        char map_save_time[32];
+                        std::strftime(map_save_time, sizeof(map_save_time), "%Y%m%d_%H%M%S", &tm);
+
+                        std::string map_dir = g_mapping_result_dest_dir != "" ? g_mapping_result_dest_dir : map_root_dir_.string();
+                        std::string map_name = g_mapping_result_file_name != "" ? g_mapping_result_file_name : "map_" + std::string(map_save_time) + ".bin";
+                        
+                        #ifdef ROS2
+                            RCLCPP_INFO(rclcpp::get_logger("command_processor"), 
+                                       "Map save triggered, will transfer to [%s/%s]", map_dir.c_str(), map_name.c_str());
+                        #else
+                            ROS_INFO("Map save triggered, will transfer to [%s/%s]", map_dir.c_str(), map_name.c_str());
+                        #endif
+                        
+                        // Mark transfer as in-progress BEFORE spawning the thread to avoid
+                        // race conditions with subsequent set save_map=1 calls.
+                        g_map_transfer_in_progress.store(true);
+                        
+                        // Run save-map in a background thread so we don't block the command processor.
+                        // All the orchestration (trigger -> poll -> fetch) is now handled inside
+                        // the SDK's lidar_save_map() one-shot API, so this side just blocks on it
+                        // and reports the final outcome.
+                        std::thread([map_dir, map_name]() {
+                            // 0 = use SDK default generation timeout (120s).
+                            int ret = lidar_save_map(odinDevice, map_dir.c_str(), map_name.c_str(), 0);
+                            // Always clear the in-progress flag when this thread exits
+                            g_map_transfer_in_progress.store(false);
+                            
+                            if (ret == 0) {
+                                #ifdef ROS2
+                                    RCLCPP_INFO(rclcpp::get_logger("map_transfer"), "Map transfer completed: %s/%s", map_dir.c_str(), map_name.c_str());
+                                #else
+                                    ROS_INFO("Map transfer completed: %s/%s", map_dir.c_str(), map_name.c_str());
+                                #endif
+                            } else if (ret == -2) {
+                                #ifdef ROS2
+                                    RCLCPP_WARN(rclcpp::get_logger("map_transfer"), "Map transfer skipped: device is busy with another transfer");
+                                #else
+                                    ROS_WARN("Map transfer skipped: device is busy with another transfer");
+                                #endif
+                            } else {
+                                #ifdef ROS2
+                                    RCLCPP_WARN(rclcpp::get_logger("map_transfer"), "Map transfer failed, error code: %d", ret);
+                                #else
+                                    ROS_WARN("Map transfer failed, error code: %d", ret);
+                                #endif
+                            }
+                        }).detach();
+                    }
+                    return;  // save_map=1 handled, skip the generic set path below
+                }
+
+                // Generic path for all other parameters (and save_map=0 / save_map=N>1).
+                int result = lidar_set_custom_parameter(odinDevice, param_name.c_str(), &value, sizeof(int));
                 if (result == 0) {
                     #ifdef ROS2
-                        RCLCPP_INFO(rclcpp::get_logger("command_processor"), 
+                        RCLCPP_INFO(rclcpp::get_logger("command_processor"),
                                    "Successfully set %s = %d", param_name.c_str(), value);
                     #else
                         ROS_INFO("Successfully set %s = %d", param_name.c_str(), value);
+                    #endif
+                } else if (result == -2) {
+                    // Device is transferring file, this is expected if user triggers save_map again
+                    #ifdef ROS2
+                        RCLCPP_INFO(rclcpp::get_logger("command_processor"), 
+                                   "Device is busy transferring file, please wait for current transfer to complete");
+                    #else
+                        ROS_INFO("Device is busy transferring file, please wait for current transfer to complete");
                     #endif
                 } else {
                     #ifdef ROS2

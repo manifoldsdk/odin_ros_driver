@@ -1,15 +1,3 @@
-/*
-Copyright 2025 Manifold Tech Ltd.(www.manifoldtech.com.co)
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-   http://www.apache.org/licenses/LICENSE-2.0
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
 #ifndef LIDAR_API_H
 #define LIDAR_API_H
 
@@ -23,6 +11,99 @@ limitations under the License.
  *
  * @copyright Copyright (c) 2025, Manifold Tech Limited, All Rights Reserved
  * @version 1.0
+ * 
+ * ┌──────────────────────────────────────────────────────────────────────────────┐
+ * │                              QUICK START                                     │
+ * ├──────────────────────────────────────────────────────────────────────────────┤
+ * │ 1. API Call Sequence (typical usage):                                        │
+ * │                                                                              │
+ * │    lidar_system_init(device_cb)     // Initialize system, register device cb│
+ * │           ↓                                                                  │
+ * │    [Wait for device_cb with attach=true to get device info]                  │
+ * │           ↓                                                                  │
+ * │    lidar_create_device(&dev_info, &handle)   // Create device handle         │
+ * │           ↓                                                                  │
+ * │    lidar_register_stream_callback(handle, cb_info)  // Register data callback│
+ * │           ↓                                                                  │
+ * │    lidar_open_device(handle)        // Connect to device                     │
+ * │           ↓                                                                  │
+ * │    lidar_set_mode(handle, mode)     // Set RAW or SLAM mode                  │
+ * │           ↓                                                                  │
+ * │    lidar_start_stream(handle, type, odr)  // Start specific data stream      │
+ * │           ↓                                                                  │
+ * │    [Data arrives via registered callback]                                    │
+ * │           ↓                                                                  │
+ * │    lidar_stop_stream(handle, type)  // Stop data stream                      │
+ * │           ↓                                                                  │
+ * │    lidar_close_device(handle)       // Disconnect                            │
+ * │           ↓                                                                  │
+ * │    lidar_destory_device(handle)     // Release device handle                 │
+ * │           ↓                                                                  │
+ * │    lidar_system_deinit()            // Cleanup system resources              │
+ * │                                                                              │
+ * ├──────────────────────────────────────────────────────────────────────────────┤
+ * │ 2. Operating Modes and Available Data Types:                                 │
+ * │                                                                              │
+ * │    LIDAR_MODE_RAW:                                                           │
+ * │      - LIDAR_DT_RAW_RGB      (RGB camera image, NV12 format)                 │
+ * │      - LIDAR_DT_RAW_IMU      (IMU data at 400Hz)                             │
+ * │      - LIDAR_DT_RAW_DTOF     (DTOF depth + point cloud + confidence)         │
+ * │      - LIDAR_DT_DEV_STATUS   (Device status info)                            │
+ * │      - LIDAR_DT_NTP          (PTP/NTP sync data)                             │
+ * │                                                                              │
+ * │    LIDAR_MODE_SLAM:                                                          │
+ * │      - All RAW mode types, plus:                                             │
+ * │      - LIDAR_DT_SLAM_CLOUD           (SLAM point cloud, XYZRGBA)             │
+ * │      - LIDAR_DT_SLAM_ODOMETRY        (SLAM odometry at ~10Hz)                │
+ * │      - LIDAR_DT_SLAM_ODOMETRY_HIGHFREQ (Odometry at IMU rate ~400Hz)         │
+ * │      - LIDAR_DT_SLAM_ODOMETRY_TF     (Map-Odom transform)                    │
+ * │                                                                              │
+ * ├──────────────────────────────────────────────────────────────────────────────┤
+ * │ 3. activate_stream_type vs start_stream:                                     │
+ * │                                                                              │
+ * │    lidar_activate_stream_type():                                             │
+ * │      - Configure which stream types are enabled in device                    │
+ * │      - Can enable multiple types before starting                             │
+ * │      - Does NOT start data transmission                                      │
+ * │                                                                              │
+ * │    lidar_start_stream():                                                     │
+ * │      - Actually starts data transmission for the specified type              │
+ * │      - Callback will begin receiving data after this call                    │
+ * │                                                                              │
+ * │    Typical flow:                                                             │
+ * │      activate_stream_type(LIDAR_DT_RAW_IMU);   // Enable IMU                 │
+ * │      activate_stream_type(LIDAR_DT_RAW_DTOF);  // Enable DTOF                │
+ * │      start_stream(LIDAR_DT_RAW_IMU, ...);      // Start IMU stream           │
+ * │      start_stream(LIDAR_DT_RAW_DTOF, ...);     // Start DTOF stream          │
+ * │                                                                              │
+ * ├──────────────────────────────────────────────────────────────────────────────┤
+ * │ 4. Callback Notes (IMPORTANT):                                               │
+ * │                                                                              │
+ * │    Thread Safety:                                                            │
+ * │      - Callbacks are invoked from internal SDK threads                       │
+ * │      - Different data types may use different threads                        │
+ * │      - User callback code must be thread-safe                                │
+ * │                                                                              │
+ * │    Data Lifetime:                                                            │
+ * │      - Data pointers (pAddr) are ONLY valid during callback execution        │
+ * │      - If you need to keep data, COPY it before callback returns             │
+ * │      - Do NOT store or dereference pAddr after callback returns              │
+ * │                                                                              │
+ * │    Performance:                                                              │
+ * │      - Avoid blocking or time-consuming operations in callback               │
+ * │      - Long callback execution may cause data loss or jitter                 │
+ * │      - For heavy processing, copy data and process in separate thread        │
+ * │                                                                              │
+ * ├──────────────────────────────────────────────────────────────────────────────┤
+ * │ 5. Error Codes:                                                              │
+ * │      0  : Success                                                            │
+ * │     -1  : General failure                                                    │
+ * │     -2  : Invalid parameter                                                  │
+ * │     -3  : Device not found / not connected                                   │
+ * │     -4  : Operation timeout                                                  │
+ * │     -5  : Resource allocation failed                                         │
+ * │                                                                              │
+ * └──────────────────────────────────────────────────────────────────────────────┘
  */
 
 #include "lidar_api_type.h"
@@ -35,8 +116,24 @@ extern "C" {
  * @brief Initialize the LiDAR system
  * 
  * Must be called before any other lidar function to set up the system resources.
+ * This function starts device discovery and will invoke the callback when devices
+ * are found or disconnected.
  * 
- * @param cb Callback function for device events (connection, disconnection)
+ * @param cb Callback function for device events:
+ *           - Called with attach=true when a new device is discovered
+ *           - Called with attach=false when a device is disconnected
+ *           - The lidar_device_info_t contains serial number to identify the device
+ * 
+ * Example callback:
+ *   void device_callback(const lidar_device_info_t* info, bool attach) {
+ *       if (attach) {
+ *           printf("Device connected: %s\n", info->serial);
+ *           // Save info for lidar_create_device()
+ *       } else {
+ *           printf("Device disconnected: %s\n", info->serial);
+ *       }
+ *   }
+ * 
  * @return int 0 on success, negative error code on failure
  */
 int lidar_system_init(lidar_device_callback_t cb);
@@ -54,9 +151,17 @@ int lidar_system_deinit(void);
 /**
  * @brief Create a handle for a LiDAR device
  * 
- * @param dev_info Information about the LiDAR device to create
- * @param device Pointer to receive the device handle upon success
+ * Creates a device handle using the device info received from the device callback.
+ * The handle is used for all subsequent operations on the device.
+ * 
+ * @param dev_info Information about the LiDAR device (from lidar_system_init callback)
+ *                 - serial: Device serial number (required, used to identify device)
+ *                 - model: Device model string
+ *                 - online: Device connection status
+ * @param device [OUTPUT] Pointer to receive the device handle upon success
  * @return int 0 on success, negative error code on failure
+ * 
+ * @note The dev_info should be the same structure received from the device callback
  */
 int lidar_create_device(lidar_device_info_t *dev_info, device_handle *device);
 
@@ -75,10 +180,33 @@ int lidar_destory_device(device_handle device);
  * @brief Register callback function for receiving LiDAR data streams
  * 
  * Sets up a callback function that will be called when new data is available.
+ * All data types use the same callback; use lidar_data_t.type to distinguish.
  * 
  * @param device Handle to the target device
- * @param cb Callback information containing function pointers for different data types
+ * @param cb Callback info structure:
+ *           - data_callback: Function pointer, signature: void(const lidar_data_t*, void*)
+ *           - user_data: User context pointer passed to callback (can be NULL)
+ * 
+ * Example:
+ *   void data_callback(const lidar_data_t* data, void* user_data) {
+ *       switch (data->type) {
+ *           case LIDAR_DT_RAW_IMU:
+ *               imu_convert_data_t* imu = (imu_convert_data_t*)data->stream.imageList[0].pAddr;
+ *               // Process IMU data (COPY if needed, pointer invalid after return)
+ *               break;
+ *           case LIDAR_DT_RAW_DTOF:
+ *               // data->stream.imageList[0]: depth
+ *               // data->stream.imageList[1]: point cloud XYZ
+ *               // data->stream.imageList[2]: confidence
+ *               // data->stream.imageList[3]: intensity
+ *               break;
+ *       }
+ *   }
+ * 
  * @return int 0 on success, negative error code on failure
+ * 
+ * @warning Callback is invoked from SDK internal threads. Avoid blocking operations.
+ * @warning Data pointers are only valid during callback execution. Copy if needed.
  */
 int lidar_register_stream_callback(device_handle device, lidar_data_callback_info_t cb);
 
@@ -115,8 +243,13 @@ int lidar_close_device(device_handle device);
 /**
  * @brief Set the operating mode of the LiDAR device
  * 
+ * Must be called after lidar_open_device() and before lidar_start_stream().
+ * Mode determines which data types are available for streaming.
+ * 
  * @param device Handle to the target device
- * @param mode Operating mode to set (see mode definitions in lidar_api_type.h)
+ * @param mode Operating mode to set:
+ *              - LIDAR_MODE_RAW: Raw sensor data (RGB, IMU, DTOF)
+ *              - LIDAR_MODE_SLAM: SLAM processing enabled (adds odometry, point cloud)
  * @return int 0 on success, negative error code on failure
  */
 int lidar_set_mode(device_handle device, int mode);
@@ -125,10 +258,23 @@ int lidar_set_mode(device_handle device, int mode);
  * @brief Start data streaming from the device
  * 
  * Begins the flow of data from the device for the specified type.
+ * After calling this function, registered callbacks will start receiving data.
  * 
  * @param device Handle to the target device
- * @param type Type of data stream to start (see stream type definitions in lidar_api_type.h)
+ * @param type Type of data stream to start (lidar_data_type_e):
+ *              - LIDAR_DT_RAW_RGB: RGB camera frames
+ *              - LIDAR_DT_RAW_IMU: IMU data at 400Hz
+ *              - LIDAR_DT_RAW_DTOF: Depth sensor data
+ *              - LIDAR_DT_SLAM_CLOUD: SLAM point cloud (requires SLAM mode)
+ *              - LIDAR_DT_SLAM_ODOMETRY: SLAM odometry (requires SLAM mode)
+ *              - etc. (see lidar_data_type_e in lidar_api_type.h)
+ * @param dtof_subframe_odr [OUTPUT] Returns DTOF subframe interval in microseconds.
+ *                          Only meaningful when type=LIDAR_DT_RAW_DTOF.
+ *                          For other types, this value can be ignored.
  * @return int 0 on success, negative error code on failure
+ * 
+ * @note You can start multiple stream types simultaneously by calling this
+ *       function multiple times with different types.
  */
 int lidar_start_stream(device_handle device, int type, uint32_t &dtof_subframe_odr);
 
@@ -147,10 +293,21 @@ int lidar_stop_stream(device_handle device, int type);
  * @brief Activate a specific stream type on the device
  * 
  * Enables a specific data stream type in the device configuration.
+ * This configures the device to be ready for the stream type, but does NOT
+ * start actual data transmission. Call lidar_start_stream() to begin streaming.
+ * 
+ * Use this to pre-configure multiple stream types before starting them:
+ *   activate_stream_type(handle, LIDAR_DT_RAW_IMU);
+ *   activate_stream_type(handle, LIDAR_DT_RAW_DTOF);
+ *   start_stream(handle, LIDAR_DT_RAW_IMU, odr);
+ *   start_stream(handle, LIDAR_DT_RAW_DTOF, odr);
  * 
  * @param device Handle to the target device
- * @param type Type of data stream to activate
+ * @param type Type of data stream to activate (lidar_data_type_e)
  * @return int 0 on success, negative error code on failure
+ * 
+ * @see lidar_start_stream() to actually begin data transmission
+ * @see lidar_deactivate_stream_type() to disable a stream type
  */
 int lidar_activate_stream_type(device_handle device, int type);
 
@@ -166,15 +323,33 @@ int lidar_activate_stream_type(device_handle device, int type);
 int lidar_deactivate_stream_type(device_handle device, int type);
 
 /**
- * @brief Get calibration file from the device
- * 
- * Retrieves the calibration file from the device.
- * 
+ * @brief Get the calibration file from the device
  * @param device Handle to the target device
- * @param path Path to save the calibration file
  * @return int 0 on success, negative error code on failure
  */
 int lidar_get_calib_file(device_handle device, const char* path);
+
+/**
+ * @brief Get device calibration parameters
+ * 
+ * Retrieves the current calibration parameters from the device.
+ * 
+ * @param device Handle to the target device
+ * @param param Pointer to receive the calibration parameters
+ * @return int 0 on success, negative error code on failure
+ */
+int lidar_get_calibration(device_handle device, lidar_calibration_t* param);
+
+/**
+ * @brief Set device calibration parameters
+ * 
+ * Applies new calibration parameters to the device.
+ * 
+ * @param device Handle to the target device
+ * @param param Pointer to the calibration parameters to set
+ * @return int 0 on success, negative error code on failure
+ */
+int lidar_set_calibration(device_handle device, const lidar_calibration_t *param);
 
 /**
  * @brief Set log verbosity level
@@ -222,6 +397,18 @@ int lidar_set_custom_parameter(device_handle device, const char* param_name, con
 int lidar_get_custom_parameter(device_handle device, const char* param_name, int* value);
 
 /**
+ * @brief Get custom algorithm parameters for the device
+ * 
+ * Get custom parameter settings from the device.
+ *
+ * @param device Handle to the target device
+ * @param param_name String name of the parameter to get
+ * @param value Integer value to get for the parameter
+ * @return int 0 on success, negative error code on failure
+ */
+int lidar_get_custom_parameter(device_handle device, const char* param_name, int* value);
+
+/**
  * @brief Set the map file used for relocalization
  *
  * Read & send specified map file to device for relocalization
@@ -245,6 +432,42 @@ int lidar_get_custom_parameter(device_handle device, const char* param_name, int
  int lidar_get_mapping_result(device_handle device, const char* dest_dir, const char* file_name);
 
 /**
+ * @brief Save the current map to a file on the host. Synchronous, all-in-one API.
+ *
+ * Internally drives the complete save-map state machine, so callers do not need
+ * to coordinate the multi-step protocol themselves:
+ *   1) Set custom parameter save_map = 1 on the device (kicks off generation).
+ *   2) Poll save_map until the device resets it to 0 (map generation finished).
+ *   3) Pull the resulting file via the standard mapping-result transfer (same as
+ *      lidar_get_mapping_result).
+ *   4) Return the final status to the caller.
+ *
+ * This is the recommended entry point for saving a map. The lower-level pair
+ * (lidar_set_custom_parameter("save_map") + lidar_get_mapping_result) remains
+ * available for advanced use cases.
+ *
+ * 同步保存地图到主机上的文件。一站式 API，内部完成「触发生成 → 等待设备完成 →
+ * 拉取文件」的完整流程，调用方无需自行轮询和处理异步状态。
+ *
+ * @param device         Device handle.
+ * @param dest_dir       Host directory to save the file into (must already exist).
+ * @param file_name      File name (e.g. "map.bin").
+ * @param gen_timeout_ms Maximum time (ms) to wait for the device to finish
+ *                       generating the map. Pass 0 to use the default (120000 ms).
+ * @return int
+ *          0  success, file saved at dest_dir/file_name
+ *         -1  invalid arguments (null device/dir, SDK not initialized, etc.)
+ *         -2  device is busy with another file transfer
+ *         -3  timed out waiting for the device to finish map generation
+ *         -4  file transfer stalled or failed (see logs for details)
+ *         other negative values are propagated from the underlying transfer.
+ */
+int lidar_save_map(device_handle device,
+                   const char *dest_dir,
+                   const char *file_name,
+                   uint32_t gen_timeout_ms);
+
+/**
  * @brief Set the image mask file for the device
  *
  * Read & send specified image mask file to device
@@ -255,13 +478,14 @@ int lidar_get_custom_parameter(device_handle device, const char* param_name, int
  */
  int lidar_set_image_mask(device_handle device, const char* abs_path);
 
-
   /**
- * @brief enable device log
+ * @brief enable encrypted device log
  *
+ * enable encrypted device log, save to specified directory
+ * Please send to our support when needed
  *
  * @param device Handle to the target device
- * @param dest_dir Destination directory to save the logs
+ * @param dest_dir Destination directory to save the encrypted logs
  * @return int 0 on success, -1 on failure
  */
  int lidar_enable_encrypted_device_log(device_handle device, const char* dest_dir);
