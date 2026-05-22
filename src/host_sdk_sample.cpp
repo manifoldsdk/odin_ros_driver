@@ -49,9 +49,9 @@ limitations under the License.
     #include <ros/package.h>
     #include <ros/ros.h> 
 #endif
-#define ros_driver_version "0.10.3"
+#define ros_driver_version "0.10.4"
 #define required_firmware_version_major 0
-#define required_firmware_version_minor 10
+#define required_firmware_version_minor 11
 #define required_firmware_version_patch 0
 
 // Global variable declarations
@@ -114,7 +114,7 @@ double get_ptp_smoothed_offset() {
 
  // usb device
 static std::string TARGET_VENDOR = "2207";
-static std::string TARGET_PRODUCT = "001a";
+static std::string TARGET_PRODUCT = "0019";
 // Global configuration variables
 int g_sendrgb = 1;
 int g_sendimu = 1;
