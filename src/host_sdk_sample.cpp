@@ -49,7 +49,7 @@ limitations under the License.
     #include <ros/package.h>
     #include <ros/ros.h> 
 #endif
-#define ros_driver_version "0.10.4"
+#define ros_driver_version "0.10.5"
 #define required_firmware_version_major 0
 #define required_firmware_version_minor 11
 #define required_firmware_version_patch 0
@@ -1497,6 +1497,36 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             #endif
         }
         
+        // Push device identity / version into the binary data logger's info.txt.
+        // SN is parsed from the first comment line of calib.yaml (e.g. "# O1-P010100043").
+        // No-op when recorddata=0 (logger not initialized).
+        if (g_ros_object) {
+            char fw_buf[48];
+            char algo_buf[48];
+            std::snprintf(fw_buf, sizeof(fw_buf), "%d.%d.%d",
+                          version.soc_version.major,
+                          version.soc_version.minor,
+                          version.soc_version.patch);
+            std::snprintf(algo_buf, sizeof(algo_buf), "%d.%d.%d",
+                          version.slam_version.major,
+                          version.slam_version.minor,
+                          version.slam_version.patch);
+            std::string sn;
+            if (std::filesystem::exists(calib_config)) {
+                std::ifstream calib_in(calib_config);
+                std::string first_line;
+                if (calib_in.is_open() && std::getline(calib_in, first_line)) {
+                    // Strip leading '#' and any whitespace, take token until end-of-line / whitespace.
+                    size_t pos = first_line.find_first_not_of("# \t");
+                    if (pos != std::string::npos) {
+                        size_t end = first_line.find_first_of(" \t\r\n", pos);
+                        sn = first_line.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+                    }
+                }
+            }
+            g_ros_object->update_data_logger_info(sn, fw_buf, algo_buf);
+        }
+
         if (std::filesystem::exists(calib_config)) {
             g_renderer = std::make_shared<rawCloudRender>();
             if (g_renderer->init(calib_config)) {

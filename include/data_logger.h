@@ -26,6 +26,7 @@ limitations under the License.
 #include <memory>
 #include <cstdlib>
 #include <ctime>
+#include <sstream>
 
 class BinaryDataLogger {
 public:
@@ -65,12 +66,13 @@ public:
         root_dir_ = base / buf;
         fs::create_directories(root_dir_);
         fs::create_directories(root_dir_ / "image");
-        // 转成 std::string
+        // Convert to std::string
         std::string timestamp(buf);
-        // 拼接文件名
+        created_at_ = timestamp;
+        // Compose file name
         std::filesystem::path pcFile = root_dir_ / ("MT" + timestamp + ".olx");
-        // Create placeholder files
-        write_text_file(root_dir_ / "image" / "info.txt", "device=OdinOne\npointcloud=xyzrgbi\ncreated_at=" + std::string(buf) + "\n");
+        // Create placeholder files (device_id / firmware / algorithm filled later via update_info_file)
+        write_info_file_unlocked();
         write_text_file(root_dir_ / "image" / "cam_in_ex.txt", "# camera intrinsics/extrinsics TBD\n");
 
         // Init writers
@@ -92,6 +94,18 @@ public:
     }
 
     const std::filesystem::path& root_dir() const { return root_dir_; }
+
+    // Update info.txt with device_id (SN) / firmware (SoC) / algorithm version.
+    // Safe to call multiple times; latest values win.
+    void update_info_file(const std::string& device_id,
+                          const std::string& firmware_version,
+                          const std::string& algorithm_version) {
+        std::lock_guard<std::mutex> lk(info_mtx_);
+        device_id_ = device_id;
+        firmware_version_ = firmware_version;
+        algorithm_version_ = algorithm_version;
+        write_info_file_unlocked();
+    }
 
     // Enqueue ready-to-write frame blobs (already formatted as per spec)
     void enqueuePoseFrame(std::vector<uint8_t>&& blob) {
@@ -194,7 +208,30 @@ private:
         }
     }
 
+    // Render info.txt from current member fields. Caller must hold info_mtx_.
+    void write_info_file_unlocked() {
+        std::ostringstream oss;
+        oss << "device=OdinOne\n"
+            << "pointcloud=xyzrgbi\n";
+        if (!device_id_.empty()) {
+            oss << "device_id=" << device_id_ << "\n";
+        }
+        if (!firmware_version_.empty()) {
+            oss << "firmware_version=" << firmware_version_ << "\n";
+        }
+        if (!algorithm_version_.empty()) {
+            oss << "algorithm_version=" << algorithm_version_ << "\n";
+        }
+        oss << "created_at=" << created_at_ << "\n";
+        write_text_file(root_dir_ / "image" / "info.txt", oss.str());
+    }
+
     std::filesystem::path root_dir_;
+    std::string created_at_;
+    std::string device_id_;
+    std::string firmware_version_;
+    std::string algorithm_version_;
+    std::mutex info_mtx_;
     std::unique_ptr<Writer> pose_writer_;
     std::unique_ptr<Writer> cloud_writer_;
     std::unique_ptr<Writer> image_writer_;

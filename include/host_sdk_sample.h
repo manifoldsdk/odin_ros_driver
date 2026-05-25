@@ -245,6 +245,16 @@ public:
         data_logger_ = std::move(logger);
     }
 
+    // Forward device identity / version metadata into the binary data logger's info.txt.
+    // No-op if logger is not initialized (e.g. recorddata=0).
+    void update_data_logger_info(const std::string& device_id,
+                                 const std::string& firmware_version,
+                                 const std::string& algorithm_version) {
+        if (data_logger_) {
+            data_logger_->update_info_file(device_id, firmware_version, algorithm_version);
+        }
+    }
+
     int get_pose_index() {
         return pose_index_.load();
     }
