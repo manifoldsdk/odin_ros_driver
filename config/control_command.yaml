@@ -91,6 +91,8 @@ register_keys:
   
   custom_map_mode: 0      # 0: Odometry mode 1: SLAM mode 2: Relocalization mode
   custom_init_pos: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+  custom_init_pose_search_radius: 4.0 # max position offset in meters, recommended <= 10
+  custom_init_pose_max_rot_deg: 180.0 # max rotation offset in degrees, up to 180
   relocalization_map_abs_path: "" # must be set for Relocalization mode or will fail
 
   # To get the mapping result file, please use the set_param.sh script provided: "./set_param.sh save_map 1"
