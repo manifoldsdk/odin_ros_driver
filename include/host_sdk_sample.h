@@ -26,7 +26,17 @@ limitations under the License.
 #include <iomanip>
 #include <cstring>
 #include <opencv2/opencv.hpp>
-#include <cv_bridge/cv_bridge.h>
+// cv_bridge header: ROS2 humble+ provides cv_bridge.hpp; ROS2 jazzy removes the legacy .h.
+// Prefer .hpp when available, fall back to .h for older ROS distros (e.g. foxy/galactic).
+#if defined(__has_include)
+#  if __has_include(<cv_bridge/cv_bridge.hpp>)
+#    include <cv_bridge/cv_bridge.hpp>
+#  else
+#    include <cv_bridge/cv_bridge.h>
+#  endif
+#else
+#  include <cv_bridge/cv_bridge.h>
+#endif
 #include <thread>
 #include <Eigen/Dense>
 #include <atomic>

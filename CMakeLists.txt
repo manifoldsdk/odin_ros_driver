@@ -249,6 +249,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     find_package(tf2_ros REQUIRED)
     find_package(geometry_msgs REQUIRED)
     find_package(tf2_geometry_msgs REQUIRED)
+    find_package(ament_index_cpp REQUIRED)
     
     # Create executable
     add_executable(host_sdk_sample 
@@ -278,6 +279,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         tf2_ros
         geometry_msgs
         tf2_geometry_msgs
+        ament_index_cpp
     )
     
     add_library(pointcloud_depth_converter_ros2 src/pointcloud_depth_converter.cpp)
@@ -419,6 +421,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         tf2_ros
         geometry_msgs
         tf2_geometry_msgs
+        ament_index_cpp
     )
     
     ament_package()

@@ -67,13 +67,27 @@ build_workspace() {
 
     cd $WS_DIR
     rm -rf build install log
-    # Ensure ROS2 environment is loaded
-    if [ -f "/opt/ros/foxy/setup.bash" ]; then
-        source "/opt/ros/foxy/setup.bash"
-    elif [ -f "/opt/ros/galactic/setup.bash" ]; then
-        source "/opt/ros/galactic/setup.bash"
-    elif [ -f "/opt/ros/humble/setup.bash" ]; then
-        source "/opt/ros/humble/setup.bash"
+    # Ensure ROS2 environment is loaded.
+    # 1) Prefer the currently active distro (ROS_DISTRO env var) if its setup.bash exists.
+    # 2) Otherwise probe a known list of ROS2 distros from newest to oldest.
+    ROS2_DISTRO_CANDIDATES=("rolling" "jazzy" "iron" "humble" "galactic" "foxy")
+    ROS2_SETUP_BASH=""
+
+    if [ -n "${ROS_DISTRO}" ] && [ -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]; then
+        ROS2_SETUP_BASH="/opt/ros/${ROS_DISTRO}/setup.bash"
+    else
+        for distro in "${ROS2_DISTRO_CANDIDATES[@]}"; do
+            if [ -f "/opt/ros/${distro}/setup.bash" ]; then
+                ROS2_SETUP_BASH="/opt/ros/${distro}/setup.bash"
+                break
+            fi
+        done
+    fi
+
+    if [ -n "${ROS2_SETUP_BASH}" ]; then
+        echo -e "${GREEN}Sourcing ROS2 environment: ${ROS2_SETUP_BASH}${NC}"
+        # shellcheck disable=SC1090
+        source "${ROS2_SETUP_BASH}"
     else
         echo -e "${RED}Could not find ROS2 setup.bash file. Please ensure ROS2 is installed.${NC}"
         return 1
