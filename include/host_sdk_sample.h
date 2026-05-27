@@ -190,6 +190,32 @@ inline uint64_t ros_time_to_ns(const ros::Time &t) {
     #endif
 }
 
+// Compute an "aligned" nanosecond timestamp for offline recording (recorddata files).
+// Mirrors the policy used by make_aligned_stamp() so that recorded timestamps stay
+// consistent with the timestamps that are published over ROS topics.
+//   g_use_host_ros_time == 0 : raw sensor timestamp (odin1 boot time, no alignment)
+//   g_use_host_ros_time == 1 : host wall-clock now (NTP-synced if the host is NTP-synced)
+//   g_use_host_ros_time == 2 : sensor timestamp aligned via smoothed PTP offset (NTP/PTP mode)
+//
+//   g_use_host_ros_time == 0 :
+//   g_use_host_ros_time == 1 : 
+//   g_use_host_ros_time == 2 : 
+inline uint64_t aligned_stamp_ns(uint64_t sensor_timestamp_ns) {
+    if (g_use_host_ros_time == 1) {
+        const auto now = std::chrono::system_clock::now().time_since_epoch();
+        return static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+    }
+    if (g_use_host_ros_time == 2) {
+        const double offset_s = get_ptp_smoothed_offset();
+        const int64_t offset_ns = static_cast<int64_t>(offset_s * 1e9);
+        const int64_t base_ns = static_cast<int64_t>(sensor_timestamp_ns);
+        const int64_t aligned_ns = base_ns - offset_ns;
+        return (aligned_ns < 0) ? 0ULL : static_cast<uint64_t>(aligned_ns);
+    }
+    return sensor_timestamp_ns;
+}
+
 inline ros::Time make_aligned_stamp(uint64_t sensor_timestamp_ns
 #ifdef ROS2
                                     , const rclcpp::Node::SharedPtr& node
@@ -316,7 +342,8 @@ public:
         #endif
 
         if(data_logger_) {
-            const double ts_sec = static_cast<double>(stream->stamp) / 1e9;
+            // Align IMU timestamp with the same policy as ROS publish path
+            const double ts_sec = static_cast<double>(aligned_stamp_ns(stream->stamp)) / 1e9;
             float ax = imu_msg.linear_acceleration.x;
             float ay = imu_msg.linear_acceleration.y;
             float az = imu_msg.linear_acceleration.z;
@@ -810,7 +837,8 @@ void publishRgb(capture_Image_List_t *stream) {
         // Enqueue binary logging for image
         if (data_logger_) {
             const uint32_t idx_now = image_index_.fetch_add(1, std::memory_order_relaxed);
-            const double ts_sec = static_cast<double>(stream->imageList[0].timestamp) / 1e9;
+            // Align image timestamp with the same policy as ROS publish path (NTP mode -> NTP time)
+            const double ts_sec = static_cast<double>(aligned_stamp_ns(stream->imageList[0].timestamp)) / 1e9;
             const uint32_t jpeg_size = static_cast<uint32_t>(jpeg_data.size());
             std::vector<uint8_t> blob;
             blob.reserve(sizeof(uint32_t) + sizeof(double) + sizeof(uint32_t) + jpeg_size);
@@ -967,7 +995,8 @@ void publishRgb(capture_Image_List_t *stream) {
 
         // Enqueue binary logging for point cloud (XYZRGB per point)
         if (data_logger_ && points > 0) {
-            const double ts_sec = static_cast<double>(stream->imageList[0].timestamp) / 1e9;
+            // Align point cloud timestamp with the same policy as ROS publish path (NTP mode -> NTP time)
+            const double ts_sec = static_cast<double>(aligned_stamp_ns(stream->imageList[0].timestamp)) / 1e9;
             const uint32_t idx_now = cloud_index_.fetch_add(1, std::memory_order_relaxed);
             // Compute total blob size: header + per-point payload
             const size_t header_size = sizeof(uint32_t) + sizeof(double) + sizeof(uint32_t);
@@ -1015,7 +1044,8 @@ void publishRgb(capture_Image_List_t *stream) {
             if (data_len == sizeof(ros_odom_convert_complete_t)) {
                 ros_odom_convert_complete_t* odom_data = (ros_odom_convert_complete_t*)stream->imageList[0].pAddr;
                 const uint32_t idx_now = wcwi_index_.fetch_add(1, std::memory_order_relaxed);
-                const double ts_sec = static_cast<double>(odom_data->timestamp_ns) / 1e9;
+                // Align WIWC/rotate timestamp with the same policy as ROS publish path (NTP mode -> NTP time)
+                const double ts_sec = static_cast<double>(aligned_stamp_ns(odom_data->timestamp_ns)) / 1e9;
                 float pose_arr[4];
                 pose_arr[0] = static_cast<float>((odom_data->orient[0]) / 1e6);
                 pose_arr[1] = static_cast<float>((odom_data->orient[1]) / 1e6);
@@ -1231,7 +1261,8 @@ void publishRgb(capture_Image_List_t *stream) {
                 // Enqueue binary logging for pose
                 if ((odom_type == OdometryType::STANDARD) && data_logger_) {
                     const uint32_t idx_now = pose_index_.fetch_add(1, std::memory_order_relaxed);
-                    const double ts_sec = static_cast<double>(odom_data->timestamp_ns) / 1e9;
+                    // Align pose timestamp with the same policy as ROS publish path (NTP mode -> NTP time)
+                    const double ts_sec = static_cast<double>(aligned_stamp_ns(odom_data->timestamp_ns)) / 1e9;
                     float pose_arr[7];
                     pose_arr[0] = static_cast<float>(msg.pose.pose.position.x);
                     pose_arr[1] = static_cast<float>(msg.pose.pose.position.y);
