@@ -544,6 +544,81 @@ sudo usermod -aG plugdev $USER
 ```
 Then log out and log back in for the group change to take effect.
 
+### 5.13 ros2 bag drops high-frequency topics (IMU / odometry_highfreq) / ros2 bag 录制丢失高频话题（IMU / odometry_highfreq）
+
+**Symptom / 现象**
+
+When recording with `ros2 bag record`, low-frequency topics (cloud, image, odometry, wiwc) are intact, but `/odin1/imu` (400 Hz) and `/odin1/odometry_highfreq` (400 Hz) show missing samples — analysis scripts report inter-message intervals that are 2× or more of the expected period, while no drop is reported on the SDK side or by an online subscriber such as `ros2 topic hz`.
+
+使用 `ros2 bag record` 录制时，低频话题（cloud、image、odometry、wiwc）完整无丢，但 `/odin1/imu`（400 Hz）和 `/odin1/odometry_highfreq`（400 Hz）会出现丢帧——分析脚本上看到消息间隔达到正常周期的 2 倍以上，而 SDK 侧不报丢，独立的 `ros2 topic hz` 订阅者也看不到丢。
+
+**Reason / 原因**
+
+The driver publishes `/odin1/imu` and `/odin1/odometry_highfreq` with `RELIABLE` QoS. By default `ros2 bag record` subscribes with `history = keep_last`, `depth = 10`, which only buffers ~25 ms of samples at 400 Hz. Whenever the recorder is briefly delayed (disk flush, mcap/sqlite chunk write, scheduler jitter), its subscription queue overflows and DDS silently drops the oldest samples on the **subscriber side**. The SDK and publisher are unaffected, which is why no drop appears in the driver logs or in `ros2 topic hz`.
+
+驱动以 `RELIABLE` QoS 发布 `/odin1/imu` 与 `/odin1/odometry_highfreq`。`ros2 bag record` 默认订阅使用 `history = keep_last`、`depth = 10`，在 400 Hz 下只能缓冲约 25 ms。一旦录制端有短暂阻塞（落盘 flush、mcap/sqlite chunk 写入、调度抖动），订阅队列就会溢出，DDS 在**订阅端**静默丢掉最旧的样本。SDK 与 publisher 不受影响，因此驱动日志和 `ros2 topic hz` 都看不到丢。
+
+**Resolution / 解决方案**
+
+Use the provided QoS override file `script/rosbag2_qos.yaml` to raise the subscriber-side queue depth on the recorder for the two high-rate topics:
+
+使用本仓库提供的 QoS 配置 `script/rosbag2_qos.yaml`，把高频话题的录制订阅 depth 拉大：
+
+```yaml
+# script/rosbag2_qos.yaml
+/odin1/imu:
+  reliability: reliable
+  history: keep_last
+  depth: 4000
+
+/odin1/odometry_highfreq:
+  reliability: reliable
+  history: keep_last
+  depth: 4000
+```
+
+Apply it when recording / 录制时通过 `--qos-profile-overrides-path` 应用：
+
+```shell
+ros2 bag record -a \
+    --qos-profile-overrides-path src/odin_ros_driver/script/rosbag2_qos.yaml \
+    -o my_bag
+```
+
+Or only the high-rate topics / 也可以只录制高频话题：
+
+```shell
+ros2 bag record \
+    --qos-profile-overrides-path src/odin_ros_driver/script/rosbag2_qos.yaml \
+    -o my_bag \
+    /odin1/imu /odin1/odometry_highfreq /odin1/odometry /odin1/wiwc /odin1/cloud_raw
+```
+
+**Optional further tuning / 可选的进一步优化**
+
+If drops still occur after applying the override (typically on slower disks), try the following in addition / 套用上述 override 后仍有丢包时（通常发生在慢盘上），可叠加以下措施：
+
+```shell
+# Use mcap backend with a larger internal cache (faster than sqlite3).
+# 使用 mcap 后端 + 更大的内部缓存（比 sqlite3 快）。
+ros2 bag record -s mcap --max-cache-size 1073741824 \
+    --qos-profile-overrides-path src/odin_ros_driver/script/rosbag2_qos.yaml \
+    -o my_bag \
+    /odin1/imu /odin1/odometry_highfreq ...
+
+# Enlarge kernel UDP socket buffers (the most common hidden bottleneck for
+# 400 Hz RELIABLE traffic, default is only 208 KB).
+# 放大内核 UDP socket buffer（400 Hz RELIABLE 流量最常见的隐藏瓶颈，默认仅 208 KB）。
+sudo sysctl -w net.core.rmem_max=33554432
+sudo sysctl -w net.core.wmem_max=33554432
+```
+
+**Does ROS1 have the same problem? / ROS1 是否存在同样的问题？**
+
+No. ROS1 uses TCP-based publish/subscribe with a single `queue_size` parameter on each side, and has no QoS profile mismatch between publisher and subscriber. The ROS1 publisher path in this driver already sizes the IMU and `odometry_highfreq` publishers to `queue_size = 4000` (`include/host_sdk_sample.h`, see `initialize_publishers` ROS1 branch), and `rosbag record` uses TCP transport which is reliable by construction. As a result this specific drop pattern does not occur under ROS1; no additional configuration is required.
+
+不存在。ROS1 使用基于 TCP 的发布/订阅，发布端与订阅端各自只有一个 `queue_size` 参数，不存在 ROS2 那种 QoS profile 不匹配的问题。本驱动 ROS1 路径已经把 IMU 与 `odometry_highfreq` 的发布队列设置为 `queue_size = 4000`（见 `include/host_sdk_sample.h` 中 `initialize_publishers` 的 ROS1 分支），并且 `rosbag record` 使用 TCP 传输本身即可靠传递。因此在 ROS1 下不会出现该丢帧现象，也不需要额外配置。
+
 ## 6.  Contact Information​​
 
 You can contact our support through support@manifoldtech.cn

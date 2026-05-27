@@ -1,0 +1,18 @@
+# rosbag2_qos.yaml
+# QoS overrides for rosbag2 recording
+# 用于 rosbag2 录制的 QoS 配置
+# 
+# Usage / 使用方法:
+#   ros2 bag record -a --qos-profile-overrides-path rosbag2_qos.yaml
+
+# High frequency data (IMU 400Hz, Odom 100Hz)
+# 高频数据 (IMU 400Hz, 里程计 100Hz)
+/odin1/imu:
+  reliability: reliable
+  history: keep_last
+  depth: 4000
+
+/odin1/odometry_highfreq:
+  reliability: reliable
+  history: keep_last
+  depth: 4000

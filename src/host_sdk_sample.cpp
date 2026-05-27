@@ -102,7 +102,7 @@ static std::thread g_imu_thread;
 static std::queue<imu_convert_data_t> g_imu_queue;
 static std::mutex g_imu_queue_mutex;
 static std::condition_variable g_imu_queue_cv;
-static const size_t IMU_QUEUE_MAX_SIZE = 200;
+static const size_t IMU_QUEUE_MAX_SIZE = 8000;
 
 double get_ptp_smoothed_delay() {
     return g_ptp_delay_smooth.load(std::memory_order_relaxed);
@@ -114,7 +114,7 @@ double get_ptp_smoothed_offset() {
 
  // usb device
 static std::string TARGET_VENDOR = "2207";
-static std::string TARGET_PRODUCT = "0019";
+static std::string TARGET_PRODUCT = "001a";
 // Global configuration variables
 int g_sendrgb = 1;
 int g_sendimu = 1;
