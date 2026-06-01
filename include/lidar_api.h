@@ -525,6 +525,63 @@ int lidar_enable_imu_smooth_sending(int enable);
  */
 int lidar_set_imu_smooth_frequency(uint32_t frequency_hz);
 
+/**
+ * @brief Reset the USB connection to the device
+ *
+ * Performs a USB port reset on the device (libusb_reset_device). This
+ * re-enumerates the device on the host without requiring a physical
+ * re-plug. The device handle should typically be reopened after the
+ * device reconnects.
+ *
+ * @param device Handle to the target device
+ * @return int 0 on success, negative error code on failure
+ */
+int lidar_reset_usb(device_handle device);
+
+/**
+ * @brief Query the current device initial/running state.
+ *
+ * Returns the latest state reported by the device through heartbeats. The
+ * value corresponds to ::lidar_device_initial_state_e (NONE,
+ * NOT_INITIALIZED, INITIALIZED, STREAMING, STREAM_STOPPED). Callers that
+ * need to wait until the device is fully booted (for example before
+ * uploading a relocalization map) should poll this until it becomes
+ * LIDAR_DEVICE_STREAMING (or LIDAR_DEVICE_INITIALIZED at minimum).
+ *
+ *
+ * @param state Output pointer that receives the current state. Must not be NULL.
+ * @return int 0 on success, negative error code on failure.
+ */
+int lidar_get_device_state(lidar_device_initial_state_e *state);
+
+/**
+ * @brief Send a host-defined pass-through user-data blob to the device.
+ *
+ * The device forwards data[] as-is to SLAM via shared memory
+ * ("user_data_shm"). No acknowledgment is returned from the device
+ * (fire-and-forget). An SDK-internal monotonic counter is packed into
+ * the on-wire frameId field so SLAM can still distinguish consecutive
+ * frames without the caller having to manage an id.
+ *
+ * Preconditions:
+ *  - SDK initialized and the device opened (lidar_open_device).
+ *  - SLAM has been started on the device side; otherwise the device
+ *    silently drops the frame and logs a warning.
+ *
+ * Constraints:
+ *  - blob != NULL.
+ *  - 0 < blob_len <= 8 MiB (8 * 1024 * 1024).
+ *  - Sending faster than SLAM can consume causes device-side timeouts
+ *    and dropped frames. Pace according to SLAM throughput.
+ *
+ * @param device   Handle returned by lidar_create_device / lidar_open_device.
+ * @param blob     Pointer to user payload.
+ * @param blob_len Length in bytes.
+ * @return int 0 on success, negative error code on failure.
+ */
+int lidar_send_user_data(device_handle device,
+                         const void *blob, uint32_t blob_len);
+
 #ifdef __cplusplus
 }
 #endif

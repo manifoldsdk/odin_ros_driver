@@ -1,3 +1,8 @@
+v0.11.0 2026_0601
+1.add transfer custom data inferface
+2.add odom and slam sync and coordinate transform
+3.add upload algo files throught update_firmware_tool
+
 v0.10.5 2026_0525
 1.modify recorddata format，add device_id、algorithm_version key
 2.fix download map fail when in slam mode(USB2.0)

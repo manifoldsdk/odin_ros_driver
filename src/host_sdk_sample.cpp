@@ -49,10 +49,10 @@ limitations under the License.
     #include <ros/package.h>
     #include <ros/ros.h> 
 #endif
-#define ros_driver_version "0.10.5"
+#define ros_driver_version "0.11.0"
 #define required_firmware_version_major 0
 #define required_firmware_version_minor 11
-#define required_firmware_version_patch 0
+#define required_firmware_version_patch 11
 
 // Global variable declarations
 static device_handle odinDevice = nullptr;
@@ -114,7 +114,7 @@ double get_ptp_smoothed_offset() {
 
  // usb device
 static std::string TARGET_VENDOR = "2207";
-static std::string TARGET_PRODUCT = "001a";
+static std::string TARGET_PRODUCT = "0019";
 // Global configuration variables
 int g_sendrgb = 1;
 int g_sendimu = 1;
@@ -1364,7 +1364,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                 RCLCPP_INFO(rclcpp::get_logger(__func__), "Daemon_proc_version: V%d.%d.%d",version.Daemon_proc_version.major,version.Daemon_proc_version.minor,version.Daemon_proc_version.patch);
                 RCLCPP_INFO(rclcpp::get_logger(__func__), "slam_version: V%d.%d.%d",version.slam_version.major,version.slam_version.minor,version.slam_version.patch);
             #else
-                ROS_INFO("ros_driver_version:%s, recommended_firmware_version:%d.%d.%d", ros_driver_version, required_firmware_version_major, required_firmware_version_minor, required_firmware_version_patch);
+                ROS_INFO("ros_driver_version:%s, recommended_min_firmware_version:%d.%d.%d", ros_driver_version, required_firmware_version_major, required_firmware_version_minor, required_firmware_version_patch);
                 ROS_INFO("get version success.");
                 ROS_INFO("kernel_version: V%d.%d.%d",version.kernel_version.major,version.kernel_version.minor,version.kernel_version.patch);
                 ROS_INFO("mcu_version: V%d.%d.%d",version.mcu_version.major,version.mcu_version.minor,version.mcu_version.patch);
@@ -1373,7 +1373,17 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                 ROS_INFO("slam_version: V%d.%d.%d",version.slam_version.major,version.slam_version.minor,version.slam_version.patch);
             #endif
 
-            if (version.soc_version.major < required_firmware_version_major || (version.soc_version.minor < required_firmware_version_minor) || (version.soc_version.patch < required_firmware_version_patch)) {
+            // Lexicographic compare on (major, minor, patch): treat the three
+            // fields as a single ordered tuple. e.g. 0.12.0 must be considered
+            // higher than 0.11.99, and 0.11.11 lower than 0.12.0.
+            const bool soc_version_too_low =
+                (version.soc_version.major <  required_firmware_version_major) ||
+                (version.soc_version.major == required_firmware_version_major &&
+                    version.soc_version.minor <  required_firmware_version_minor) ||
+                (version.soc_version.major == required_firmware_version_major &&
+                    version.soc_version.minor == required_firmware_version_minor &&
+                    version.soc_version.patch <  required_firmware_version_patch);
+            if (soc_version_too_low) {
                 #ifdef ROS2
                     RCLCPP_ERROR(rclcpp::get_logger(__func__),"The soc version is too low, please upgrade the device firmware to at least %d.%d.%d\n",required_firmware_version_major,required_firmware_version_minor,required_firmware_version_patch);
                 #else
@@ -1833,7 +1843,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         }
         g_param_monitor_running = true;
         g_param_monitor_thread = std::thread(custom_parameter_monitor);
-        
+
         #ifdef ROS2
             RCLCPP_INFO(rclcpp::get_logger("device_cb"),
                        "Command interface ready. Use: echo 'set save_map 1' > %s", g_command_file_path.c_str());
@@ -1873,7 +1883,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         if (g_param_monitor_thread.joinable()) {
             g_param_monitor_thread.join();
         }
-        
+
 
         clear_all_queues();
 
@@ -2260,7 +2270,7 @@ int main(int argc, char *argv[])
     if (g_param_monitor_thread.joinable()) {
         g_param_monitor_thread.join();
     }
-    
+
     
     // lidar_system_deinit();
 
