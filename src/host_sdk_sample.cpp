@@ -1568,6 +1568,8 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             dtofpara.odr = LIDAR_DEPTH_ODR_10HZ;
         } else if (g_dtof_fps == 145) {
             dtofpara.odr = LIDAR_DEPTH_ODR_14_5HZ;
+        } else if (g_dtof_fps == 290){
+            dtofpara.odr = LIDAR_DEPTH_ODR_29HZ;
         } else {
             // Default to 14.5Hz if invalid value
             dtofpara.odr = LIDAR_DEPTH_ODR_14_5HZ;

@@ -326,7 +326,8 @@ typedef enum {
 
 typedef enum {
     LIDAR_DEPTH_ODR_10HZ = 0,
-    LIDAR_DEPTH_ODR_14_5HZ,
+    LIDAR_DEPTH_ODR_14_5HZ = 1,
+    LIDAR_DEPTH_ODR_29HZ = 2,
 } lidar_depth_odr_e;
 
 typedef struct {
