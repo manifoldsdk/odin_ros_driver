@@ -325,14 +325,116 @@ typedef enum {
 } lidar_device_initial_state_e;
 
 typedef enum {
-    LIDAR_DEPTH_ODR_10HZ = 0,
+    LIDAR_DEPTH_ODR_10HZ   = 0,
     LIDAR_DEPTH_ODR_14_5HZ = 1,
-    LIDAR_DEPTH_ODR_29HZ = 2,
+    LIDAR_DEPTH_ODR_29HZ   = 2,
 } lidar_depth_odr_e;
 
 typedef struct {
     lidar_depth_odr_e odr;
 } lidar_depth_para_t;
+
+/* ---------------------------------------------------------------------
+ * Camera AE / AWB control types.
+ *
+ * The host SDK forwards AE/AWB requests through the USB control channel
+ * (CMD_CODE_CONTROL_CMD + SYS_CONTROL_AE_UDP). The device-side lydapp
+ * relays them via UDP loopback to its ISP service. See
+ * sdk/api/Host_USB_AE_Protocol.md for the wire-level details.
+ * ------------------------------------------------------------------- */
+
+/**
+ * @brief AE/AWB control mode used by lidar_set_ae_param / lidar_set_awb_param.
+ *
+ * - AUTO   : the device runs its own AE/AWB convergence loop. The two
+ *            float parameters of the corresponding Set call are ignored.
+ * - MANUAL : the device locks AE/AWB and applies the user-supplied
+ *            (exposure_time, gain) or (rgain, bgain). Out-of-range
+ *            values are rejected with rc = 403
+ *            (LIDAR_AE_PARAM_OUT_OF_RANGE).
+ */
+typedef enum {
+    LIDAR_CAM_MODE_AUTO   = 0, /**< switch to auto AE / AWB */
+    LIDAR_CAM_MODE_MANUAL = 1, /**< switch to manual AE / AWB and apply params */
+} lidar_cam_mode_e;
+
+/**
+ * @brief Current AE status returned by lidar_get_ae_info().
+ *
+ * Field-by-field meaning and typical range:
+ *
+ *   exposure_time : current sensor exposure time, in seconds.
+ *                   Manual-mode valid range: 0.0001 .. 0.033.
+ *                   In auto mode varies with scene illumination.
+ *   gain          : current analog gain (linear, not dB).
+ *                   Manual-mode valid range: 1.0 .. 64.0.
+ *                   Higher value = brighter output but worse SNR.
+ *   iso           : equivalent ISO speed, typically 100 .. 6400.
+ *                   Derived from gain; informational only.
+ *   brightness    : average frame brightness in [0, 255]. AE target
+ *                   converges toward a mid-range value.
+ *   is_converged  : 1 = AE has settled, 0 = still adjusting.
+ *   env_lv        : ambient luminance index, typically 0 .. 15
+ *                   (higher = brighter scene).
+ *   fps           : actual frame rate in Hz, follows dtof_fps config
+ *                   (~10 / 14.5 / 29).
+ */
+typedef struct {
+    float    exposure_time; /**< current exposure time (s), 0.0001..0.033 */
+    float    gain;          /**< current analog gain, 1.0..64.0 */
+    int32_t  iso;           /**< equivalent ISO, ~100..6400 */
+    float    brightness;    /**< average frame brightness, 0..255 */
+    uint8_t  is_converged;  /**< 1 = AE converged, 0 = not converged */
+    float    env_lv;        /**< ambient luminance level, ~0..15 */
+    float    fps;           /**< current frame rate (Hz) */
+} lidar_ae_info_t;
+
+/**
+ * @brief Current AWB status returned by lidar_get_awb_info().
+ *
+ * Field-by-field meaning and typical range:
+ *
+ *   rgain        : R channel gain. Manual-mode valid range: 0.1 .. 4.0.
+ *                  Raising rgain relative to bgain shifts the image
+ *                  toward warm (yellow/red).
+ *   grgain       : Gr channel gain. Device-fixed at 1.0, not adjustable.
+ *   gbgain       : Gb channel gain. Device-fixed at 1.0, not adjustable.
+ *   bgain        : B channel gain. Manual-mode valid range: 0.1 .. 4.0.
+ *                  Raising bgain relative to rgain shifts the image
+ *                  toward cool (blue).
+ *   cct          : correlated color temperature in Kelvin, typically
+ *                  2500 .. 8000 K.
+ *   ccri         : color temperature deviation index, signed value
+ *                  roughly in -50 .. 50; 0 = on the Planckian locus.
+ *   is_converged : 1 = AWB has settled, 0 = still adjusting.
+ */
+typedef struct {
+    float    rgain;         /**< R channel gain, 0.1..4.0 */
+    float    grgain;        /**< Gr channel gain, device-fixed 1.0 */
+    float    gbgain;        /**< Gb channel gain, device-fixed 1.0 */
+    float    bgain;         /**< B channel gain, 0.1..4.0 */
+    float    cct;           /**< color temperature (K), ~2500..8000 */
+    float    ccri;          /**< color temperature deviation, ~-50..50 */
+    uint8_t  is_converged;  /**< 1 = AWB converged, 0 = not converged */
+} lidar_awb_info_t;
+
+/**
+ * @brief AE/AWB device-side error codes.
+ *
+ * Mapped to positive return values of lidar_get_ae_info / lidar_set_ae_param /
+ * lidar_get_awb_info / lidar_set_awb_param when the device replies with
+ * CMD_CODE_FAIL. See Host_USB_AE_Protocol.md section 6.
+ */
+typedef enum {
+    LIDAR_AE_OK                   = 0,
+    LIDAR_AE_BAD_REQUEST          = 400, /**< payload too short */
+    LIDAR_AE_UNSUPPORTED_OPCODE   = 401,
+    LIDAR_AE_BAD_PARAM_LEN        = 402,
+    LIDAR_AE_PARAM_OUT_OF_RANGE   = 403,
+    LIDAR_AE_SOCKET_ERROR         = 404,
+    LIDAR_AE_NO_RESPONSE          = 405, /**< ae_control UDP timeout */
+    LIDAR_AE_UNKNOWN_OPCODE       = 0xFF,/**< status byte from ae_control */
+} lidar_ae_error_e;
 
 #ifdef __cplusplus
 }

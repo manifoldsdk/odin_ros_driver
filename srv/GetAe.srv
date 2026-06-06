@@ -1,0 +1,13 @@
+# Query current AE (auto exposure) state.
+# Request: empty.
+# Response: success + raw return code + decoded fields.
+---
+bool success            # true if rc == 0
+int32 rc                # 0=ok, >0=device error (400..405 or 0xFF), <0=SDK error
+float32 exposure_time   # seconds (manual range 0.0001 .. 0.033)
+float32 gain            # analog gain
+int32 iso               # equivalent ISO
+float32 brightness      # average frame brightness
+uint8 is_converged      # 1=converged, 0=not converged
+float32 env_lv          # ambient luminance level
+float32 fps             # current frame rate

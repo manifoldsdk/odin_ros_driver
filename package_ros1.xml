@@ -16,7 +16,11 @@
   <depend>nav_msgs</depend>
   <depend>cv_bridge</depend>
   <depend>image_transport</depend>
-  
+
+  <!-- AE/AWB debug services (custom .srv files in srv/) -->
+  <build_depend>message_generation</build_depend>
+  <exec_depend>message_runtime</exec_depend>
+
   <!-- System dependencies -->
   <depend>eigen</depend>
   <depend>opencv</depend>

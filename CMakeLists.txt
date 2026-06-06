@@ -144,12 +144,27 @@ if(ROS_VERSION STREQUAL "ROS1")
         cv_bridge
         tf
         image_transport
+        message_generation
     )
-    
+
+    # ---- AE/AWB debug services ----
+    # Declare custom .srv files; catkin generates ros1 message headers for them.
+    add_service_files(
+        FILES
+        GetAe.srv
+        GetAwb.srv
+        SetAe.srv
+        SetAwb.srv
+    )
+    generate_messages(
+        DEPENDENCIES
+        std_msgs
+    )
+
     include_directories(${catkin_INCLUDE_DIRS})
-    
+
     catkin_package(
-        CATKIN_DEPENDS roscpp std_msgs sensor_msgs nav_msgs cv_bridge image_transport
+        CATKIN_DEPENDS roscpp std_msgs sensor_msgs nav_msgs cv_bridge image_transport message_runtime
         INCLUDE_DIRS include
     )
     
@@ -174,6 +189,9 @@ if(ROS_VERSION STREQUAL "ROS1")
     	pthread  
         usb-1.0
     )
+    # Make sure the AE/AWB srv headers are generated before host_sdk_sample
+    # is compiled (catkin's generate_messages produces this target).
+    add_dependencies(host_sdk_sample ${PROJECT_NAME}_generate_messages_cpp)
 
     add_library(pointcloud_depth_converter src/pointcloud_depth_converter.cpp)
     target_link_libraries(pointcloud_depth_converter
@@ -250,7 +268,18 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     find_package(geometry_msgs REQUIRED)
     find_package(tf2_geometry_msgs REQUIRED)
     find_package(ament_index_cpp REQUIRED)
-    
+
+    # ---- AE/AWB debug services ----
+    # Generate C++ bindings for the 4 .srv files in srv/. The generated
+    # headers are linked into host_sdk_sample so it can host the services.
+    find_package(rosidl_default_generators REQUIRED)
+    rosidl_generate_interfaces(${PROJECT_NAME}
+        "srv/GetAe.srv"
+        "srv/GetAwb.srv"
+        "srv/SetAe.srv"
+        "srv/SetAwb.srv"
+    )
+
     # Create executable
     add_executable(host_sdk_sample 
         src/host_sdk_sample.cpp
@@ -265,7 +294,13 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         yaml-cpp
         usb-1.0
     )
-    
+
+    # Link the generated AE/AWB srv typesupport into host_sdk_sample so it
+    # can host the 4 debug services.
+    rosidl_get_typesupport_target(cpp_typesupport_target
+        ${PROJECT_NAME} "rosidl_typesupport_cpp")
+    target_link_libraries(host_sdk_sample "${cpp_typesupport_target}")
+
     # Add ROS2 dependencies
     ament_target_dependencies(host_sdk_sample
         rclcpp 
@@ -368,6 +403,9 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         pcd2depth_ros2_node
         cloud_reprojection_ros2_node
         image_overlay_node
+        depth_image_ros2_node_lib
+        pointcloud_depth_converter_ros2
+        cloud_reprojector_ros2
         EXPORT export_${PROJECT_NAME}
         ARCHIVE DESTINATION lib
         LIBRARY DESTINATION lib

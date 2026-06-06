@@ -327,6 +327,187 @@ float32 rgb           // RGB value
 | relocalization_map_abs_path        | Absolute Path to Map File: Used for relocalization mode. |
 | mapping_result_dest_dir and mapping_result_file_name| Path and Name for Saving Maps in Mapping Mode: If not specified, default values will be used. |
 
+### 4.6 Runtime AE/AWB Tuning via ROS Service / 通过 ROS Service 在线调节 AE/AWB
+
+The driver hosts four ROS services that let a side terminal tune the
+camera's auto exposure (AE) and auto white balance (AWB) at runtime,
+while the main data streams keep flowing. The same SDK call is shared
+with the driver's main control path and serialised by an internal
+mutex, so it is safe to invoke these services concurrently with normal
+operation.
+
+驱动启动后会注册 4 个 ROS Service，允许在不重启 driver 的前提下，从另一个终端动态调节
+相机的自动曝光（AE）和自动白平衡（AWB）。底层 SDK 调用与驱动主控制路径共享同一把
+互斥锁，因此可以与正常数据流并发调用。
+
+**Service list / Service 一览**
+
+| Service name | Type / 类型 | Purpose / 用途 |
+|---|---|---|
+| `/odin1/get_ae`  | `odin_ros_driver/srv/GetAe`  | Query current AE status / 查询当前 AE 状态 |
+| `/odin1/get_awb` | `odin_ros_driver/srv/GetAwb` | Query current AWB status / 查询当前 AWB 状态 |
+| `/odin1/set_ae`  | `odin_ros_driver/srv/SetAe`  | Set AE mode and (manual) exposure / gain / 设置 AE 模式和手动曝光/增益 |
+| `/odin1/set_awb` | `odin_ros_driver/srv/SetAwb` | Set AWB mode and (manual) R/B gain / 设置 AWB 模式和手动 R/B 增益 |
+
+#### 4.6.1 Request fields, ranges, physical meaning / 请求字段、范围与物理含义
+
+**`SetAe.Request`**
+
+| Field | Range / 范围 | Meaning / 含义 |
+|---|---|---|
+| `mode` | `0` (AUTO) or / 或 `1` (MANUAL) | `0` = device runs its own AE loop, the two floats below are ignored / 设备自动调 AE，下方参数被忽略<br>`1` = device locks AE and applies the provided values / 设备锁 AE 并应用提供的值 |
+| `exposure_time` | `0.0001` ~ `0.033` s (manual only / 仅手动模式) | Sensor exposure time per frame. Longer = brighter but more motion blur / 每帧传感器曝光时间。越长越亮但运动模糊增大 |
+| `gain` | `1.0` ~ `64.0` (manual only / 仅手动模式) | Analog gain. Higher = brighter output but worse SNR / 模拟增益。越大越亮但信噪比越差 |
+
+**`SetAwb.Request`**
+
+| Field | Range / 范围 | Meaning / 含义 |
+|---|---|---|
+| `mode`  | `0` (AUTO) or / 或 `1` (MANUAL) | `0` = device runs its own AWB loop / 设备自动 AWB<br>`1` = device locks AWB and applies provided gains / 设备锁定 AWB 并应用所给增益 |
+| `rgain` | `0.1` ~ `4.0` (manual only / 仅手动模式) | R channel gain. Higher `rgain` vs `bgain` shifts the image warm (yellow/red) / R 通道增益，相对 bgain 越大，画面越偏暖 |
+| `bgain` | `0.1` ~ `4.0` (manual only / 仅手动模式) | B channel gain. Higher `bgain` vs `rgain` shifts the image cool (blue) / B 通道增益，相对 rgain 越大，画面越偏冷 |
+
+> Gr / Gb channels are fixed to 1.0 by the device and are not adjustable.
+> Gr / Gb 通道被设备固定为 1.0，不可调节。
+
+#### 4.6.2 Response fields / 响应字段
+
+All four services return a `success` (bool) and `rc` (int32). Get
+services additionally return the queried state.
+4 个 Service 都返回 `success` (bool) 与 `rc` (int32)。Get 类还会返回查询到的状态字段。
+
+**`GetAe.Response`**
+
+| Field | Typical range / 典型范围 | Meaning / 含义 |
+|---|---|---|
+| `exposure_time` | `0.0001`~`0.033` s | Current exposure / 当前曝光时间 |
+| `gain` | `1.0`~`64.0` | Current analog gain / 当前模拟增益 |
+| `iso` | `100`~`6400` | Equivalent ISO / 等效 ISO |
+| `brightness` | `0`~`255` | Average frame brightness / 平均帧亮度 |
+| `is_converged` | `0` or `1` | `1` = AE settled / AE 已收敛 |
+| `env_lv` | `0`~`15` | Ambient luminance index, higher = brighter / 环境光强度指数，越大越亮 |
+| `fps` | `~10` / `~14.5` / `~29` | Current frame rate / 当前帧率 |
+
+**`GetAwb.Response`**
+
+| Field | Typical range / 典型范围 | Meaning / 含义 |
+|---|---|---|
+| `rgain` / `bgain` | `0.1`~`4.0` | R / B channel gain / R / B 通道增益 |
+| `grgain` / `gbgain` | `1.0` (fixed / 固定) | Gr / Gb gain, device-fixed / Gr / Gb 增益，设备固定 |
+| `cct` | `2500`~`8000` K | Correlated color temperature / 相关色温 |
+| `ccri` | `-50`~`50` | Color temp deviation index, 0 = on Planckian locus / 色温偏离指数，0 表示在普朗克轨迹上 |
+| `is_converged` | `0` or `1` | `1` = AWB settled / AWB 已收敛 |
+
+#### 4.6.3 `rc` return code / `rc` 返回码
+
+| `rc` | Meaning / 含义 |
+|---|---|
+| `0` | Success / 成功 |
+| `400` | Device payload too short / 设备载荷过短 |
+| `401` | Device opcode not supported / 设备不支持该 opcode |
+| `402` | Device parameter length wrong / 参数长度错误 |
+| `403` | **Parameter out of range** / 参数越界 — most common when manual values exceed the table above / 手动值超出上表范围时最常见 |
+| `404` | Device-side socket error / 设备端 socket 错误 |
+| `405` | Device-side `ae_control` did not respond / 设备端 `ae_control` 无应答（确认 lydapp 已运行） |
+| `255` (`0xFF`) | Unknown opcode reported by ae_control / ae_control 报未知 opcode |
+| `-1` | SDK not initialised / SDK 未初始化 |
+| `-2` ~ `-5` | USB transfer / timeout / malformed reply / USB 传输异常、超时、应答畸形 |
+| `-100` | **Driver has not opened the device yet** / driver 还未打开设备，请等设备连接成功 |
+
+#### 4.6.4 Usage examples / 调用示例
+
+ROS2 (Humble) — start the driver in one terminal, then in a side terminal:
+ROS2（Humble）—— 在一个终端启动 driver，在另一个终端：
+
+```bash
+source install/setup.bash
+
+# Query current state / 查询当前状态
+ros2 service call /odin1/get_ae  odin_ros_driver/srv/GetAe
+ros2 service call /odin1/get_awb odin_ros_driver/srv/GetAwb
+
+# Set AE to AUTO / 设置 AE 为自动
+ros2 service call /odin1/set_ae odin_ros_driver/srv/SetAe "{mode: 0}"
+
+# Set AE to MANUAL with 10 ms exposure and gain 4.0
+# 设置 AE 为手动，10 毫秒曝光，增益 4.0
+ros2 service call /odin1/set_ae odin_ros_driver/srv/SetAe \
+  "{mode: 1, exposure_time: 0.010, gain: 4.0}"
+
+# Set AWB to MANUAL with rgain=1.5, bgain=2.0
+# 设置 AWB 为手动，rgain=1.5、bgain=2.0
+ros2 service call /odin1/set_awb odin_ros_driver/srv/SetAwb \
+  "{mode: 1, rgain: 1.5, bgain: 2.0}"
+
+# Restore AUTO / 一键回自动
+ros2 service call /odin1/set_ae  odin_ros_driver/srv/SetAe  "{mode: 0}"
+ros2 service call /odin1/set_awb odin_ros_driver/srv/SetAwb "{mode: 0}"
+
+# Inspect srv definition / 查看 srv 完整定义
+ros2 interface show odin_ros_driver/srv/SetAe
+```
+
+ROS1 (Noetic) — start the driver, then in a side terminal:
+ROS1（Noetic）—— 启动 driver 后，新开终端：
+
+```bash
+source devel/setup.bash
+
+# Query / 查询
+rosservice call /odin1/get_ae
+rosservice call /odin1/get_awb
+
+# Set AE manual / 设置 AE 手动
+rosservice call /odin1/set_ae  "{mode: 1, exposure_time: 0.010, gain: 4.0}"
+
+# Set AWB manual / 设置 AWB 手动
+rosservice call /odin1/set_awb "{mode: 1, rgain: 1.5, bgain: 2.0}"
+
+# Restore AUTO (ROS1 requires all fields to be present)
+# 一键回自动（ROS1 要求填齐全部字段）
+rosservice call /odin1/set_ae  "{mode: 0, exposure_time: 0.0, gain: 0.0}"
+rosservice call /odin1/set_awb "{mode: 0, rgain: 0.0, bgain: 0.0}"
+
+# Inspect srv definition / 查看 srv 完整定义
+rossrv show odin_ros_driver/SetAe
+```
+
+#### 4.6.5 Recommended starting points by scene / 不同场景推荐起步参数
+
+**AE (`exposure_time`, `gain`)**
+
+| Scene / 场景 | `exposure_time` | `gain` |
+|---|---|---|
+| Bright outdoor / 明亮室外 | `0.001` ~ `0.005` s | `1.0` ~ `2.0` |
+| Normal indoor / 普通室内 | `0.008` ~ `0.015` s | `2.0` ~ `8.0` |
+| Dim light / 暗光环境 | `0.020` ~ `0.030` s | `8.0` ~ `32.0` |
+| Very dark / 极暗 | `0.033` s | `32.0` ~ `64.0` |
+
+**AWB (`rgain`, `bgain`)**
+
+| Target tone / 目标色调 | `rgain` | `bgain` |
+|---|---|---|
+| Warm (tungsten, sunset) / 暖（钨丝灯、夕阳） | `2.0` ~ `2.5` | `1.0` ~ `1.2` |
+| Neutral (D65 daylight) / 中性（D65 日光） | `1.5` ~ `1.7` | `1.8` ~ `2.0` |
+| Cool (cloudy, fluorescent) / 冷（阴天、荧光） | `1.2` ~ `1.4` | `2.2` ~ `2.6` |
+| Very cool / 极冷 | `1.0` | `3.0` ~ `4.0` |
+
+#### 4.6.6 Caveats / 注意事项
+
+- The service blocks for up to ~10 s waiting for the device to reply;
+  typical latency is tens of milliseconds.
+  Service 最长阻塞约 10 秒等设备应答；正常几十毫秒返回。
+- Manual mode is **not** persisted across driver / device restart;
+  it falls back to AUTO on each new connection.
+  手动模式**不会**跨重启保留；每次重连默认回到 AUTO。
+- `rc = -100` means the driver has not yet opened the device.
+  Wait until the driver logs `device connected` before calling.
+  返回 `rc = -100` 表示 driver 还没打开设备，等到 driver 日志显示 `device connected` 再调用。
+- The effective maximum `exposure_time` is bounded by the frame
+  period `1 / fps`. With `dtof_fps = 290` (29 Hz, period ~34 ms)
+  the upper limit 0.033 s is already at the frame boundary.
+  最大可用 `exposure_time` 受帧周期 `1/fps` 限制。在 `dtof_fps = 290`（29 Hz、周期 ~34 ms）下，上限 0.033 s 已经贴到帧边界。
+
 ## 5. FAQ
 ### 5.1 Segmentation fault upon re-launching host SDK
 **Error Message**  

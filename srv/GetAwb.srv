@@ -1,0 +1,13 @@
+# Query current AWB (auto white balance) state.
+# Request: empty.
+# Response: success + raw return code + decoded fields.
+---
+bool success            # true if rc == 0
+int32 rc                # 0=ok, >0=device error (400..405 or 0xFF), <0=SDK error
+float32 rgain
+float32 grgain
+float32 gbgain
+float32 bgain
+float32 cct             # color temperature in Kelvin
+float32 ccri            # color temperature deviation
+uint8 is_converged      # 1=converged, 0=not converged

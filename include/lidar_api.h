@@ -582,6 +582,143 @@ int lidar_get_device_state(lidar_device_initial_state_e *state);
 int lidar_send_user_data(device_handle device,
                          const void *blob, uint32_t blob_len);
 
+/* ---------------------------------------------------------------------
+ * Camera AE / AWB control APIs.
+ *
+ * All four APIs are synchronous (send + wait response) and serialised by
+ * an internal mutex (the same mutex protecting other control commands).
+ * Return value convention:
+ *   == 0   success
+ *   >  0   device-side error, see lidar_ae_error_e (400..405 or 0xFF)
+ *   <  0   SDK-side error (not initialised, bad argument, USB failure,
+ *          response timeout, malformed reply, ...)
+ *
+ * Wire-level details: sdk/api/Host_USB_AE_Protocol.md.
+ * ------------------------------------------------------------------- */
+
+/**
+ * @brief Query current AE (auto exposure) state.
+ *
+ * Sends AE opcode 0x01 and decodes the 25-byte little-endian payload
+ * returned by the device-side ae_control service.
+ *
+ * Output fields and their physical meaning:
+ *   exposure_time : current exposure time in seconds (manual range
+ *                   0.0001 .. 0.033; in auto mode it varies with
+ *                   scene illumination).
+ *   gain          : current analog gain (manual range 1.0 .. 64.0;
+ *                   higher = brighter but noisier).
+ *   iso           : equivalent ISO, typically 100 .. 6400.
+ *   brightness    : average frame brightness (0 .. 255).
+ *   is_converged  : 1 = AE has settled, 0 = still adjusting.
+ *   env_lv        : ambient luminance index, typically 0 .. 15
+ *                   (higher = brighter scene).
+ *   fps           : actual frame rate, follows dtof_fps config
+ *                   (~10 / 14.5 / 29 Hz).
+ *
+ * @param device Device handle returned by lidar_create_device / lidar_open_device.
+ * @param out    Output buffer, must not be NULL.
+ * @return See return value convention above.
+ */
+int lidar_get_ae_info(device_handle device, lidar_ae_info_t *out);
+
+/**
+ * @brief Query current AWB (auto white balance) state.
+ *
+ * Sends AE opcode 0x30 and decodes the 25-byte little-endian payload.
+ *
+ * Output fields and their physical meaning:
+ *   rgain        : R  channel gain (manual range 0.1 .. 4.0).
+ *   grgain       : Gr channel gain, always 1.0 (device-fixed).
+ *   gbgain       : Gb channel gain, always 1.0 (device-fixed).
+ *   bgain        : B  channel gain (manual range 0.1 .. 4.0).
+ *   cct          : correlated color temperature in Kelvin
+ *                  (typically 2500 .. 8000 K).
+ *   ccri         : color temperature deviation index (-50 .. 50,
+ *                  signed; 0 means on the Planckian locus).
+ *   is_converged : 1 = AWB has settled, 0 = still adjusting.
+ *
+ * @param device Device handle.
+ * @param out    Output buffer, must not be NULL.
+ * @return See return value convention above.
+ */
+int lidar_get_awb_info(device_handle device, lidar_awb_info_t *out);
+
+/**
+ * @brief Set AE mode and (in manual mode) exposure/gain.
+ *
+ * Behaviour:
+ *   - mode == LIDAR_CAM_MODE_AUTO   : sends opcode 0x02 only;
+ *                                     exposure_time / gain are ignored.
+ *   - mode == LIDAR_CAM_MODE_MANUAL : sends opcode 0x03 to switch to
+ *                                     manual AE, then opcode 0x06 to
+ *                                     apply (exposure_time, gain).
+ *
+ * Parameter ranges and physical meaning
+ * (manual mode only; out-of-range returns rc = 403):
+ *
+ *   exposure_time : 0.0001 s .. 0.033 s
+ *       Sensor exposure time per frame. Longer = brighter but more
+ *       motion blur and lower effective fps if it exceeds the frame
+ *       period (1/fps). For dtof_fps = 290 (29 Hz, period ~34 ms) the
+ *       upper bound 0.033 s is already at the frame limit.
+ *
+ *   gain          : 1.0 .. 64.0
+ *       Analog gain applied to the raw sensor signal. Higher = brighter
+ *       output but worse SNR. Typical sweet spot: 1.0 .. 8.0 for daylight,
+ *       8.0 .. 32.0 for indoor / dim light, 32.0 .. 64.0 only when image
+ *       must be visible at any cost.
+ *
+ * Recommended starting points by scene:
+ *   bright outdoor : exposure 0.001~0.005 s, gain 1.0~2.0
+ *   normal indoor  : exposure 0.008~0.015 s, gain 2.0~8.0
+ *   dim light      : exposure 0.020~0.030 s, gain 8.0~32.0
+ *
+ * @param device        Device handle.
+ * @param mode          See lidar_cam_mode_e.
+ * @param exposure_time Exposure time in seconds (manual mode only).
+ * @param gain          Analog gain (manual mode only).
+ * @return See return value convention above.
+ */
+int lidar_set_ae_param(device_handle device, lidar_cam_mode_e mode,
+                       float exposure_time, float gain);
+
+/**
+ * @brief Set AWB mode and (in manual mode) R/B channel gains.
+ *
+ * Behaviour:
+ *   - mode == LIDAR_CAM_MODE_AUTO   : sends opcode 0x31 only;
+ *                                     rgain / bgain are ignored.
+ *   - mode == LIDAR_CAM_MODE_MANUAL : sends opcode 0x32 to switch to
+ *                                     manual AWB, then opcode 0x33 to
+ *                                     apply (rgain, bgain). Gr/Gb are
+ *                                     fixed to 1.0 by the device.
+ *
+ * Parameter ranges and physical meaning
+ * (manual mode only; out-of-range returns rc = 403):
+ *
+ *   rgain : 0.1 .. 4.0
+ *       Multiplier on the R channel before color matrix. Higher rgain
+ *       relative to bgain shifts the image toward warm (yellow/red).
+ *
+ *   bgain : 0.1 .. 4.0
+ *       Multiplier on the B channel. Higher bgain relative to rgain
+ *       shifts the image toward cool (blue).
+ *
+ * Color-temperature cookbook (approximate):
+ *   warm (tungsten, sunset) : rgain ~2.0..2.5, bgain ~1.0..1.2
+ *   neutral (daylight D65)  : rgain ~1.5..1.7, bgain ~1.8..2.0
+ *   cool (cloudy, fluor.)   : rgain ~1.2..1.4, bgain ~2.2..2.6
+ *
+ * @param device Device handle.
+ * @param mode   See lidar_cam_mode_e.
+ * @param rgain  R channel gain (manual mode only).
+ * @param bgain  B channel gain (manual mode only).
+ * @return See return value convention above.
+ */
+int lidar_set_awb_param(device_handle device, lidar_cam_mode_e mode,
+                        float rgain, float bgain);
+
 #ifdef __cplusplus
 }
 #endif

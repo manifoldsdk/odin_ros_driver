@@ -1,0 +1,14 @@
+# Set AE (auto exposure) mode and (in manual mode) exposure / gain.
+#
+# mode == 0 (AUTO)   : sends opcode 0x02 only; exposure_time and gain ignored.
+# mode == 1 (MANUAL) : sends opcode 0x03 then 0x06 (exposure_time, gain).
+#
+# Valid manual ranges (device-enforced; out-of-range returns rc=403):
+#   exposure_time : 0.0001 s .. 0.033 s
+#   gain          : 1.0     .. 64.0
+uint8 mode
+float32 exposure_time
+float32 gain
+---
+bool success
+int32 rc                # 0=ok, >0=device error (400..405 or 0xFF), <0=SDK error
