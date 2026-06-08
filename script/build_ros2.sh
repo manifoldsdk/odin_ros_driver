@@ -65,15 +65,19 @@ build_workspace() {
     
     echo -e "${YELLOW}Starting ROS2 project build...${NC}"
 
-    cd $WS_DIR
+    cd "${WORKSPACE_ROOT}" || return 1
     rm -rf build install log
     # Ensure ROS2 environment is loaded
-    if [ -f "/opt/ros/foxy/setup.bash" ]; then
+    if [ -n "${ROS_DISTRO}" ] && [ -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]; then
+        source "/opt/ros/${ROS_DISTRO}/setup.bash"
+    elif [ -f "/opt/ros/foxy/setup.bash" ]; then
         source "/opt/ros/foxy/setup.bash"
     elif [ -f "/opt/ros/galactic/setup.bash" ]; then
         source "/opt/ros/galactic/setup.bash"
     elif [ -f "/opt/ros/humble/setup.bash" ]; then
         source "/opt/ros/humble/setup.bash"
+    elif [ -f "/opt/ros/jazzy/setup.bash" ]; then
+        source "/opt/ros/jazzy/setup.bash"
     else
         echo -e "${RED}Could not find ROS2 setup.bash file. Please ensure ROS2 is installed.${NC}"
         return 1
