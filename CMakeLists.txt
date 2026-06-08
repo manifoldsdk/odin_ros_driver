@@ -6,7 +6,7 @@ if(DEFINED BUILD_SYSTEM)
     set(ROS_VERSION ${BUILD_SYSTEM})
     message(STATUS "ROS_VERSION: ${ROS_VERSION}")
 elseif(DEFINED ENV{ROS_DISTRO})
-    if("$ENV{ROS_DISTRO}" MATCHES "foxy|galactic|humble|iron|rolling")
+    if("$ENV{ROS_DISTRO}" MATCHES "foxy|galactic|humble|iron|jazzy|rolling")
         set(ROS_VERSION "ROS2")
     else()
         set(ROS_VERSION "ROS1")
@@ -237,6 +237,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     # Find all necessary ROS2 packages
     find_package(ament_cmake REQUIRED)
     find_package(rclcpp REQUIRED)
+    find_package(ament_index_cpp REQUIRED)
     find_package(std_msgs REQUIRED)
     find_package(sensor_msgs REQUIRED)
     find_package(nav_msgs REQUIRED)
@@ -267,7 +268,8 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     
     # Add ROS2 dependencies
     ament_target_dependencies(host_sdk_sample
-        rclcpp 
+        rclcpp
+        ament_index_cpp
         std_msgs 
         sensor_msgs 
         nav_msgs 
@@ -406,6 +408,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     ament_export_targets(export_${PROJECT_NAME})
     # Declare dependencies
     ament_export_dependencies(
+        ament_index_cpp
         rclcpp 
         std_msgs 
         sensor_msgs 
@@ -444,4 +447,3 @@ message(STATUS "Target platform: ${TARGET_PLATFORM}")
 message(STATUS "lydHostApi library: ${LYD_HOST_API_LIB}")
 message(STATUS "libusb library: ${LIBUSB_LIBRARIES}")
 message(STATUS "=======================================")
-
