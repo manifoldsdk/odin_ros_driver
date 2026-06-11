@@ -2066,91 +2066,99 @@ int main(int argc, char *argv[])
         odin_ros_driver::GetAe::Request,
         odin_ros_driver::GetAe::Response>(
         "/odin1/get_ae",
-        [](odin_ros_driver::GetAe::Request  & /*req*/,
-           odin_ros_driver::GetAe::Response &res) -> bool {
-            if (odinDevice == nullptr) {
-                res.success = false;
-                res.rc = -100;
+        boost::function<bool(odin_ros_driver::GetAe::Request&,
+                             odin_ros_driver::GetAe::Response&)>(
+            [](odin_ros_driver::GetAe::Request  & /*req*/,
+               odin_ros_driver::GetAe::Response &res) -> bool {
+                if (odinDevice == nullptr) {
+                    res.success = false;
+                    res.rc = -100;
+                    return true;
+                }
+                lidar_ae_info_t info{};
+                int rc = lidar_get_ae_info(odinDevice, &info);
+                res.rc            = rc;
+                res.success       = (rc == 0);
+                res.exposure_time = info.exposure_time;
+                res.gain          = info.gain;
+                res.iso           = info.iso;
+                res.brightness    = info.brightness;
+                res.is_converged  = info.is_converged;
+                res.env_lv        = info.env_lv;
+                res.fps           = info.fps;
                 return true;
-            }
-            lidar_ae_info_t info{};
-            int rc = lidar_get_ae_info(odinDevice, &info);
-            res.rc            = rc;
-            res.success       = (rc == 0);
-            res.exposure_time = info.exposure_time;
-            res.gain          = info.gain;
-            res.iso           = info.iso;
-            res.brightness    = info.brightness;
-            res.is_converged  = info.is_converged;
-            res.env_lv        = info.env_lv;
-            res.fps           = info.fps;
-            return true;
-        });
+            }));
 
     ros::ServiceServer srv_get_awb = nh.advertiseService<
         odin_ros_driver::GetAwb::Request,
         odin_ros_driver::GetAwb::Response>(
         "/odin1/get_awb",
-        [](odin_ros_driver::GetAwb::Request  & /*req*/,
-           odin_ros_driver::GetAwb::Response &res) -> bool {
-            if (odinDevice == nullptr) {
-                res.success = false;
-                res.rc = -100;
+        boost::function<bool(odin_ros_driver::GetAwb::Request&,
+                             odin_ros_driver::GetAwb::Response&)>(
+            [](odin_ros_driver::GetAwb::Request  & /*req*/,
+               odin_ros_driver::GetAwb::Response &res) -> bool {
+                if (odinDevice == nullptr) {
+                    res.success = false;
+                    res.rc = -100;
+                    return true;
+                }
+                lidar_awb_info_t info{};
+                int rc = lidar_get_awb_info(odinDevice, &info);
+                res.rc           = rc;
+                res.success      = (rc == 0);
+                res.rgain        = info.rgain;
+                res.grgain       = info.grgain;
+                res.gbgain       = info.gbgain;
+                res.bgain        = info.bgain;
+                res.cct          = info.cct;
+                res.ccri         = info.ccri;
+                res.is_converged = info.is_converged;
                 return true;
-            }
-            lidar_awb_info_t info{};
-            int rc = lidar_get_awb_info(odinDevice, &info);
-            res.rc           = rc;
-            res.success      = (rc == 0);
-            res.rgain        = info.rgain;
-            res.grgain       = info.grgain;
-            res.gbgain       = info.gbgain;
-            res.bgain        = info.bgain;
-            res.cct          = info.cct;
-            res.ccri         = info.ccri;
-            res.is_converged = info.is_converged;
-            return true;
-        });
+            }));
 
     ros::ServiceServer srv_set_ae = nh.advertiseService<
         odin_ros_driver::SetAe::Request,
         odin_ros_driver::SetAe::Response>(
         "/odin1/set_ae",
-        [](odin_ros_driver::SetAe::Request  &req,
-           odin_ros_driver::SetAe::Response &res) -> bool {
-            if (odinDevice == nullptr) {
-                res.success = false;
-                res.rc = -100;
+        boost::function<bool(odin_ros_driver::SetAe::Request&,
+                             odin_ros_driver::SetAe::Response&)>(
+            [](odin_ros_driver::SetAe::Request  &req,
+               odin_ros_driver::SetAe::Response &res) -> bool {
+                if (odinDevice == nullptr) {
+                    res.success = false;
+                    res.rc = -100;
+                    return true;
+                }
+                lidar_cam_mode_e mode = (req.mode == 1)
+                    ? LIDAR_CAM_MODE_MANUAL : LIDAR_CAM_MODE_AUTO;
+                int rc = lidar_set_ae_param(odinDevice, mode,
+                                            req.exposure_time, req.gain);
+                res.rc      = rc;
+                res.success = (rc == 0);
                 return true;
-            }
-            lidar_cam_mode_e mode = (req.mode == 1)
-                ? LIDAR_CAM_MODE_MANUAL : LIDAR_CAM_MODE_AUTO;
-            int rc = lidar_set_ae_param(odinDevice, mode,
-                                        req.exposure_time, req.gain);
-            res.rc      = rc;
-            res.success = (rc == 0);
-            return true;
-        });
+            }));
 
     ros::ServiceServer srv_set_awb = nh.advertiseService<
         odin_ros_driver::SetAwb::Request,
         odin_ros_driver::SetAwb::Response>(
         "/odin1/set_awb",
-        [](odin_ros_driver::SetAwb::Request  &req,
-           odin_ros_driver::SetAwb::Response &res) -> bool {
-            if (odinDevice == nullptr) {
-                res.success = false;
-                res.rc = -100;
+        boost::function<bool(odin_ros_driver::SetAwb::Request&,
+                             odin_ros_driver::SetAwb::Response&)>(
+            [](odin_ros_driver::SetAwb::Request  &req,
+               odin_ros_driver::SetAwb::Response &res) -> bool {
+                if (odinDevice == nullptr) {
+                    res.success = false;
+                    res.rc = -100;
+                    return true;
+                }
+                lidar_cam_mode_e mode = (req.mode == 1)
+                    ? LIDAR_CAM_MODE_MANUAL : LIDAR_CAM_MODE_AUTO;
+                int rc = lidar_set_awb_param(odinDevice, mode,
+                                             req.rgain, req.bgain);
+                res.rc      = rc;
+                res.success = (rc == 0);
                 return true;
-            }
-            lidar_cam_mode_e mode = (req.mode == 1)
-                ? LIDAR_CAM_MODE_MANUAL : LIDAR_CAM_MODE_AUTO;
-            int rc = lidar_set_awb_param(odinDevice, mode,
-                                         req.rgain, req.bgain);
-            res.rc      = rc;
-            res.success = (rc == 0);
-            return true;
-        });
+            }));
 
     ROS_INFO("AE/AWB debug services ready: "
              "/odin1/get_ae /odin1/get_awb /odin1/set_ae /odin1/set_awb");
