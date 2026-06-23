@@ -1,3 +1,6 @@
+0.13.0 20260709
+1.add large file transfer 
+
 v0.11.0 2026_0618
 Required Minimum Firmware Version：0.12.0
 1.Reduce cloud slam latency
