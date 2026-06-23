@@ -54,6 +54,10 @@ limitations under the License.
     #include "odin_ros_driver/srv/get_device_logs.hpp"
     #include "odin_ros_driver/srv/save_map.hpp"
     #include "odin_ros_driver/srv/reset_algo.hpp"
+    // GPSRAW pass-through: wire-format struct + serializer reused from the
+    // standalone gps_raw_node so an external GPS topic can be forwarded to
+    // the device via lidar_send_user_data.
+    #include "gps_raw_node.hpp"
 #else
     #include <ros/package.h>
     #include <ros/ros.h>
@@ -2075,6 +2079,60 @@ int main(int argc, char *argv[])
     rclcpp::init(argc, argv);
     auto node = std::make_shared<rclcpp::Node>("lydros_node");
     g_ros_object = std::make_shared<MultiSensorPublisher>(node);
+
+    // -----------------------------------------------------------------
+    // GPSRAW pass-through. An external program publishes the GPS fix on
+    // a GPSRAW topic (default /mavros/gpsstatus/gps1/raw). Each sample is
+    // serialized into the compact GpsRawWire binary layout and forwarded
+    // to the device (SLAM) through lidar_send_user_data, reusing the same
+    // device handle (odinDevice) that this process already owns. The
+    // handle is in-process only, so the subscription must live here rather
+    // than in a separate executable.
+    // The logger (not the node) is captured to avoid a node<->subscription
+    // ownership cycle.
+    const std::string gps_topic = node->declare_parameter<std::string>(
+        "gps_topic", "/mavros/gpsstatus/gps1/raw");
+    const rclcpp::Logger gps_logger = node->get_logger();
+    auto gps_user_data_sub = node->create_subscription<mavros_msgs::msg::GPSRAW>(
+        gps_topic, rclcpp::SensorDataQoS(),
+        [gps_logger](const mavros_msgs::msg::GPSRAW::SharedPtr msg) {
+            std::lock_guard<std::mutex> lock(device_mutex);
+            if (!deviceConnected.load() || odinDevice == nullptr) {
+                return;
+            }
+
+            // host_time:2 (g_use_host_ros_time == 2) means the incoming GPS
+            // stamp lives on the host/ROS timeline. Convert it back to the
+            // device clock domain before sending down. The publish path uses
+            // host_ns = sensor_ns - offset_ns (aligned_stamp_ns()), i.e.
+            // offset_ns = sensor_ns - host_ns, so the inverse is:
+            //   sensor_ns = host_ns + offset_ns.
+            mavros_msgs::msg::GPSRAW adjusted = *msg;
+            if (g_use_host_ros_time == 2) {
+                const double offset_s = get_ptp_smoothed_offset();
+                const int64_t offset_ns = static_cast<int64_t>(offset_s * 1e9);
+                const int64_t host_ns =
+                    static_cast<int64_t>(msg->header.stamp.sec) * 1000000000LL +
+                    static_cast<int64_t>(msg->header.stamp.nanosec);
+                int64_t dev_ns = host_ns + offset_ns;
+                if (dev_ns < 0) {
+                    dev_ns = 0;
+                }
+                adjusted.header.stamp.sec     = static_cast<int32_t>(dev_ns / 1000000000LL);
+                adjusted.header.stamp.nanosec = static_cast<uint32_t>(dev_ns % 1000000000LL);
+            }
+
+            const std::vector<uint8_t> blob = SerializeGpsRaw(adjusted);
+            const int ret = lidar_send_user_data(
+                odinDevice, blob.data(), static_cast<uint32_t>(blob.size()));
+            if (ret != 0) {
+                RCLCPP_WARN(gps_logger,
+                            "lidar_send_user_data(GPSRAW) failed: %d", ret);
+            }
+        });
+    RCLCPP_INFO(gps_logger,
+                "GPSRAW pass-through enabled, subscribing '%s'",
+                gps_topic.c_str());
 
     // -----------------------------------------------------------------
     // AE/AWB debug services (ROS2). Allow a side terminal to tune the

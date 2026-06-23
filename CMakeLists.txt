@@ -285,6 +285,17 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     find_package(geometry_msgs REQUIRED)
     find_package(tf2_geometry_msgs REQUIRED)
     find_package(ament_index_cpp REQUIRED)
+    find_package(mavros_msgs REQUIRED)
+    find_package(rosbag2_cpp REQUIRED)
+
+    # Shared GPSRAW wire-format serializer, linked by both the standalone
+    # gps_raw_node and host_sdk_sample (which forwards GPS to the device).
+    add_library(gps_raw_serializer src/gps_raw_serializer.cpp)
+    ament_target_dependencies(gps_raw_serializer
+        rclcpp
+        std_msgs
+        mavros_msgs
+    )
 
     # ---- AE/AWB debug services ----
     # Generate C++ bindings for the 4 .srv files in srv/. The generated
@@ -313,6 +324,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         ${COMMON_LIBS}
         yaml-cpp
         usb-1.0
+        gps_raw_serializer
     )
 
     # Link the generated AE/AWB srv typesupport into host_sdk_sample so it
@@ -335,6 +347,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         geometry_msgs
         tf2_geometry_msgs
         ament_index_cpp
+        mavros_msgs
     )
     
     add_library(pointcloud_depth_converter_ros2 src/pointcloud_depth_converter.cpp)
@@ -403,6 +416,23 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         message_filters
     )
 
+    add_executable(gps_raw_node src/gps_raw_node.cpp)
+    target_link_libraries(gps_raw_node gps_raw_serializer)
+    ament_target_dependencies(gps_raw_node
+        rclcpp
+        std_msgs
+        mavros_msgs
+    )
+
+    add_executable(gps_raw_roundtrip_node src/gps_raw_roundtrip_node.cpp)
+    target_link_libraries(gps_raw_roundtrip_node gps_raw_serializer)
+    ament_target_dependencies(gps_raw_roundtrip_node
+        rclcpp
+        std_msgs
+        mavros_msgs
+        rosbag2_cpp
+    )
+
     add_executable(image_overlay_node src/image_overlay_node.cpp)
     target_compile_definitions(image_overlay_node PRIVATE ROS2)
     target_link_libraries(image_overlay_node
@@ -423,6 +453,9 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         pcd2depth_ros2_node
         cloud_reprojection_ros2_node
         image_overlay_node
+        gps_raw_node
+        gps_raw_roundtrip_node
+        gps_raw_serializer
         depth_image_ros2_node_lib
         pointcloud_depth_converter_ros2
         cloud_reprojector_ros2
