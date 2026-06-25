@@ -2178,6 +2178,13 @@ int main(int argc, char *argv[])
         std::string config_dir = package_path + "/config";
         std::string config_file = config_dir + "/control_command.yaml";
 
+        node->declare_parameter("config_file", "");
+        auto config_file_override = node->get_parameter("config_file").as_string();
+        if (!config_file_override.empty()) {
+            config_file = config_file_override;
+            RCLCPP_INFO(node->get_logger(), "Using config file from parameter: %s", config_file.c_str());
+        }
+
         // Initialize command file path to /tmp/odin_command.txt
         g_command_file_path = "/tmp/odin_command.txt";
 
