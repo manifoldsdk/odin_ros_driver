@@ -2093,33 +2093,48 @@ int main(int argc, char *argv[])
     const std::string gps_topic = node->declare_parameter<std::string>(
         "gps_topic", "/mavros/gpsstatus/gps1/raw");
     const rclcpp::Logger gps_logger = node->get_logger();
+
+    auto gps_clock = node->get_clock();
     auto gps_user_data_sub = node->create_subscription<mavros_msgs::msg::GPSRAW>(
         gps_topic, rclcpp::SensorDataQoS(),
-        [gps_logger](const mavros_msgs::msg::GPSRAW::SharedPtr msg) {
+        [gps_logger, gps_clock](const mavros_msgs::msg::GPSRAW::SharedPtr msg) {
             std::lock_guard<std::mutex> lock(device_mutex);
-            if (!deviceConnected.load() || odinDevice == nullptr) {
-                return;
-            }
+            const bool connected = deviceConnected.load() && odinDevice != nullptr;
 
-            // host_time:2 (g_use_host_ros_time == 2) means the incoming GPS
-            // stamp lives on the host/ROS timeline. Convert it back to the
-            // device clock domain before sending down. The publish path uses
-            // host_ns = sensor_ns - offset_ns (aligned_stamp_ns()), i.e.
-            // offset_ns = sensor_ns - host_ns, so the inverse is:
-            //   sensor_ns = host_ns + offset_ns.
+            // host_time:2 (g_use_host_ros_time == 2): the RTK/GPS stamp is
+            // synced to the host wall-clock. The module works in its own
+            // since-boot monotonic domain, so we send down the elapsed time
+            // between now and the sample, letting the module reconstruct the
+            // capture instant on its own clock:
+            //   mono_ns = host_now_ns - msg_stamp_ns
             mavros_msgs::msg::GPSRAW adjusted = *msg;
             if (g_use_host_ros_time == 2) {
-                const double offset_s = get_ptp_smoothed_offset();
-                const int64_t offset_ns = static_cast<int64_t>(offset_s * 1e9);
-                const int64_t host_ns =
+                const int64_t host_now_ns = gps_clock->now().nanoseconds();
+                const int64_t msg_ns =
                     static_cast<int64_t>(msg->header.stamp.sec) * 1000000000LL +
                     static_cast<int64_t>(msg->header.stamp.nanosec);
-                int64_t dev_ns = host_ns + offset_ns;
-                if (dev_ns < 0) {
-                    dev_ns = 0;
+
+                int64_t mono_ns = host_now_ns + get_ptp_smoothed_offset() * 1e9;
+                if (mono_ns < 0) {
+                    // Negative means the GPS stamp is in the future relative to
+                    // host now (clock skew). Clamp and flag.
+                    RCLCPP_ERROR(gps_logger,
+                                 "GPSRAW elapsed timestamp is negative "
+                                 "(host_now_ns=%ld, msg_ns=%ld, mono_ns=%ld); "
+                                 "clamping to 0 (clock skew?)",
+                                 static_cast<long>(host_now_ns),
+                                 static_cast<long>(msg_ns),
+                                 static_cast<long>(mono_ns));
+                    mono_ns = 0;
                 }
-                adjusted.header.stamp.sec     = static_cast<int32_t>(dev_ns / 1000000000LL);
-                adjusted.header.stamp.nanosec = static_cast<uint32_t>(dev_ns % 1000000000LL);
+                adjusted.header.stamp.sec     = static_cast<int32_t>(mono_ns / 1000000000LL);
+                adjusted.header.stamp.nanosec = static_cast<uint32_t>(mono_ns % 1000000000LL);
+
+                RCLCPP_INFO(gps_logger,
+                            "GPSRAW time: host_now_ns=%ld, offset=%ld -> mono_ns=%ld",
+                            static_cast<long>(host_now_ns),
+                            static_cast<long>(get_ptp_smoothed_offset()* 1e9),
+                            static_cast<long>(mono_ns));
             }
 
             const std::vector<uint8_t> blob = SerializeGpsRaw(adjusted);

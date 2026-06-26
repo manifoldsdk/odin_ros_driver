@@ -253,6 +253,23 @@ typedef struct {
 } lidar_fireware_version_t;
 
 /**
+ * @brief Module timestamp type selector.
+ */
+typedef enum {
+    LIDAR_TS_BOOT    = 0, /* Only fill boot_ts_ns */
+    LIDAR_TS_CURRENT = 1, /* Only fill current_ts_ns */
+    LIDAR_TS_BOTH    = 2, /* Fill both fields */
+} lidar_timestamp_type_e;
+
+/**
+ * @brief Module timestamps in nanoseconds (wall-clock epoch).
+ */
+typedef struct {
+    uint64_t boot_ts_ns;    /* Wall-clock epoch (ns) at system boot moment */
+    uint64_t current_ts_ns; /* Current wall-clock epoch (ns) */
+} lidar_module_timestamp_t;
+
+/**
  * @brief RGB image sensor frame rate
  * 
  */

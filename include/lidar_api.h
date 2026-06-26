@@ -372,6 +372,22 @@ void lidar_log_set_level(lidar_log_level_e level);
 int lidar_get_version(device_handle device,lidar_fireware_version_t *version);
 
 /**
+ * @brief Get the module timestamps (boot / current)
+ *
+ * Retrieves the module's boot timestamp and/or current timestamp, both as
+ * nanosecond wall-clock epoch values. The returned fields are selected by the
+ * type parameter; unrequested fields are set to 0.
+ *
+ * @param device Handle to the target device
+ * @param type   Which timestamp(s) to retrieve (see lidar_timestamp_type_e)
+ * @param ts     Pointer to receive the timestamp(s)
+ * @return int 0 on success, negative error code on failure
+ */
+int lidar_get_module_timestamp(device_handle device,
+                               lidar_timestamp_type_e type,
+                               lidar_module_timestamp_t *ts);
+
+/**
  * @brief Set custom algorithm parameters for the device
  * 
  * Sends custom parameter settings to the device.

@@ -236,6 +236,18 @@ inline ros::Time make_aligned_stamp(uint64_t sensor_timestamp_ns
         const int64_t base_ns = static_cast<int64_t>(sensor_timestamp_ns);
         const int64_t aligned_ns = base_ns - offset_ns;
         ts_ns = (aligned_ns < 0) ? 0ULL : static_cast<uint64_t>(aligned_ns);
+
+        // Diagnostic: print the raw sensor timestamp, the smoothed PTP offset,
+        // and the aligned result. Throttled so high-rate streams do not spam.
+        static uint64_t s_alignLogCount = 0;
+        // if ((s_alignLogCount++ % 100) == 0) {
+        //     std::printf("[make_aligned_stamp] sensor_ns=%ld, offset_s=%.9f, "
+        //                 "offset_ns=%ld, aligned_ns=%ld\n",
+        //                 static_cast<long>(base_ns), offset_s,
+        //                 static_cast<long>(offset_ns),
+        //                 static_cast<long>(aligned_ns));
+        //     std::fflush(stdout);
+        // }
     }
 
     return ns_to_ros_time(ts_ns);
