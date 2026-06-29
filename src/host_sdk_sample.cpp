@@ -61,7 +61,7 @@ limitations under the License.
 #endif
 #define ros_driver_version "0.11.0"
 #define required_firmware_version_major 0
-#define required_firmware_version_minor 12
+#define required_firmware_version_minor 10
 #define required_firmware_version_patch 0
 
 // Global variable declarations
@@ -314,6 +314,7 @@ static void signal_handler(int signum) {
         #endif
 
         g_shutdown_requested = true;
+        deviceConnected = false;
 
         // Stop IMU dedicated thread
         stop_imu_thread();
@@ -348,14 +349,32 @@ static void signal_handler(int signum) {
                 ROS_INFO("Closing device...");
             #endif
 
-            if (lidar_stop_stream(odinDevice, LIDAR_MODE_SLAM))
+            if (lidar_stop_stream(odinDevice, LIDAR_DT_RAW_IMU))
             {
                 #ifdef ROS2
-                    RCLCPP_INFO(rclcpp::get_logger("device_cb"), "lidar_stop_stream failed");
+                    RCLCPP_INFO(rclcpp::get_logger("device_cb"), "lidar_stop_stream failed for IMU");
                 #else
-                    ROS_INFO("lidar_stop_stream failed");
+                    ROS_INFO("lidar_stop_stream failed for IMU");
                 #endif
             }
+            if (lidar_stop_stream(odinDevice, LIDAR_DT_RAW_DTOF))
+            {
+                #ifdef ROS2
+                    RCLCPP_INFO(rclcpp::get_logger("device_cb"), "lidar_stop_stream failed for DTOF");
+                #else
+                    ROS_INFO("lidar_stop_stream failed for DTOF");
+                #endif
+            }
+            if (lidar_stop_stream(odinDevice, LIDAR_DT_SLAM_CLOUD))
+            {
+                #ifdef ROS2
+                    RCLCPP_INFO(rclcpp::get_logger("device_cb"), "lidar_stop_stream failed for SLAM");
+                #else
+                    ROS_INFO("lidar_stop_stream failed for SLAM");
+                #endif
+            }
+            lidar_close_device(odinDevice);
+            lidar_destory_device(odinDevice);
             odinDevice = nullptr;
         }
 
@@ -380,11 +399,6 @@ static void signal_handler(int signum) {
         // triggers a flood of "Failed to delete datawriter" /
         // "Error in destruction of rcl publisher handle: cannot publish data".
         // Mirrors the clean-exit ordering at the end of main().
-        // 必须在关闭 ROS 上下文之前先析构 publisher/subscriber。否则全局
-        // g_ros_object（shared_ptr）会在 rclcpp::shutdown() 之后由静态析构器
-        // 销毁，rmw 层会刷出大量 "Failed to delete datawriter" /
-        // "Error in destruction of rcl publisher handle" 噪声。此处与 main()
-        // 末尾的正常退出顺序保持一致。
         #ifdef ROS2
             if (g_ros_object) {
                 g_ros_object.reset();
@@ -398,7 +412,8 @@ static void signal_handler(int signum) {
             ros::shutdown();
         #endif
 
-        exit(0);
+        // Don't call exit() here - let the main loop handle shutdown
+        // to avoid double-free from static destructor cleanup
     }
 }
 
@@ -1412,13 +1427,10 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                     version.soc_version.patch <  required_firmware_version_patch);
             if (soc_version_too_low) {
                 #ifdef ROS2
-                    RCLCPP_ERROR(rclcpp::get_logger(__func__),"The soc version is too low, please upgrade the device firmware to at least %d.%d.%d\n",required_firmware_version_major,required_firmware_version_minor,required_firmware_version_patch);
+                    RCLCPP_WARN(rclcpp::get_logger(__func__),"The soc version is too low, recommended firmware version is %d.%d.%d. Continuing anyway...\n",required_firmware_version_major,required_firmware_version_minor,required_firmware_version_patch);
                 #else
-                    ROS_ERROR("The soc version is too low, please upgrade the device firmware to at least %d.%d.%d\n",required_firmware_version_major,required_firmware_version_minor,required_firmware_version_patch);
+                    ROS_WARN("The soc version is too low, recommended firmware version is %d.%d.%d. Continuing anyway...\n",required_firmware_version_major,required_firmware_version_minor,required_firmware_version_patch);
                 #endif
-                system("pkill -f rviz");
-                system("pkill -f host_sdk_sample");
-                exit(1);
             }
         }
 
