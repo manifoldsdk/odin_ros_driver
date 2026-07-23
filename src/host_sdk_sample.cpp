@@ -131,6 +131,7 @@ int g_sendimu = 1;
 int g_senddtof = 1;
 int g_sendodom = 1;
 int g_send_odom_baselink_tf = 0;
+int g_tf_extra_publish_rate = 0;
 
 // SDK IMU smooth sending configuration
 int g_enable_imu_smooth = 0;
@@ -241,11 +242,20 @@ class RosNodeControlImpl : public RosNodeControlInterface {
         int cloudRawConfidenceThreshold() const {
             return cloud_raw_confidence_threshold;
         }
+
+        void setTfExtraPublishRate(int rate_hz) override {
+            tf_extra_publish_rate = rate_hz;
+        }
+
+        int getTfExtraPublishRate() const override {
+            return tf_extra_publish_rate;
+        }
     private:
         int dtof_subframe_interval_time = 0;
         bool pub_use_host_ros_time = false;
         bool pub_odom_baselink_tf = false;
         int cloud_raw_confidence_threshold = 35;
+        int tf_extra_publish_rate = 0;
     };
     
 static RosNodeControlImpl g_rosNodeControlImpl;
@@ -314,6 +324,13 @@ static void signal_handler(int signum) {
         #endif
 
         g_shutdown_requested = true;
+
+        // Stop TF extra publish thread
+        #ifdef ROS2
+        if (g_ros_object) {
+            g_ros_object->stopTfExtraPublishTimer();
+        }
+        #endif
 
         // Stop IMU dedicated thread
         stop_imu_thread();
@@ -2218,6 +2235,7 @@ int main(int argc, char *argv[])
         g_dtof_fps      = get_key_value("dtof_fps", 145);  // Read DTOF frame rate from config (100=10fps, 145=14.5fps)
         g_sendodom      = get_key_value("sendodom", 1);
         g_send_odom_baselink_tf = get_key_value("send_odom_baselink_tf", 0);
+        g_tf_extra_publish_rate = get_key_value("tf_extra_publish_rate", 0);
         g_sendcloudslam = get_key_value("sendcloudslam", 0);
         g_sendcloudrender = get_key_value("sendcloudrender", 1);
         g_sendrgb_compressed = get_key_value("sendrgbcompressed", 1);
@@ -2236,6 +2254,11 @@ int main(int argc, char *argv[])
         if (g_send_odom_baselink_tf) {
             g_rosNodeControlImpl.setSendOdomBaseLinkTF(true);
         }
+
+        g_rosNodeControlImpl.setTfExtraPublishRate(g_tf_extra_publish_rate);
+        #ifdef ROS2
+        g_ros_object->startTfExtraPublishTimer();
+        #endif
 
         auto get_key_str_value = [&](const std::string& key, const std::string& default_value) -> std::string {
             auto it = keys_w_str_val.find(key);
@@ -2387,6 +2410,7 @@ int main(int argc, char *argv[])
     if (!deviceConnected) {
         #ifdef ROS2
         if (g_ros_object) {
+            g_ros_object->stopTfExtraPublishTimer();
             g_ros_object.reset();   // destroys all publishers/subscribers
         }
         node.reset();              // destroy the node first

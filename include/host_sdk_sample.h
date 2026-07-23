@@ -250,6 +250,8 @@ class RosNodeControlInterface {
         virtual bool sendOdomBaseLinkTF() const = 0;
         virtual void setCloudRawConfidenceThreshold(int threshold) = 0;
         virtual int cloudRawConfidenceThreshold() const = 0;
+        virtual void setTfExtraPublishRate(int rate_hz) = 0;
+        virtual int getTfExtraPublishRate() const = 0;
     };
     
 RosNodeControlInterface* getRosNodeControl();
@@ -1335,7 +1337,32 @@ void publishRgb(capture_Image_List_t *stream) {
                         transformStamped.transform.rotation.y = msg.pose.pose.orientation.y;
                         transformStamped.transform.rotation.z = msg.pose.pose.orientation.z;
                         transformStamped.transform.rotation.w = msg.pose.pose.orientation.w;
-                        tf_broadcaster->sendTransform(transformStamped);
+
+                        // Cache for timer re-publishing
+                        {
+                            std::lock_guard<std::mutex> lock(tf_cache_mutex_);
+                            cached_tf_.msg = transformStamped;
+                            cached_tf_.cache_time = std::chrono::steady_clock::now();
+                            cached_tf_.orig_stamp_sec = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9;
+                            has_cached_tf_ = true;
+                        }
+
+                        if (getRosNodeControl()->getTfExtraPublishRate() > 0) {
+                            // Burst-publish TF covering the next 200ms immediately
+                            // so tf2 can interpolate for any cloud that arrives
+                            // (cloud device timestamp is typically ~100ms ahead of odom)
+                            double base_sec = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9;
+                            for (int i = 0; i <= 10; ++i) {
+                                double t_sec = base_sec + i * 0.020;  // 0, 20, 40, ... 200 ms
+                                auto tf_copy = transformStamped;
+                                tf_copy.header.stamp.sec = static_cast<int32_t>(t_sec);
+                                tf_copy.header.stamp.nanosec = static_cast<uint32_t>((t_sec - static_cast<int32_t>(t_sec)) * 1e9);
+                                tf_broadcaster->sendTransform(tf_copy);
+                            }
+                        } else {
+                            // Simple mode: publish TF only at odom timestamp
+                            tf_broadcaster->sendTransform(transformStamped);
+                        }
                     }
                     odom_publisher_->publish(msg);
 
@@ -1741,6 +1768,53 @@ private:
             tf_broadcaster = std::make_unique<tf2_ros::TransformBroadcaster>(node_);
         #endif
     }
+
+public:
+    #ifdef ROS2
+    void startTfExtraPublishTimer() {
+        int rate_hz = getRosNodeControl()->getTfExtraPublishRate();
+        if (rate_hz <= 0) return;  // Disabled, TF only published at actual odom rate
+
+        int period_ms = 1000 / rate_hz;
+        tf_thread_running_.store(true);
+        tf_thread_ = std::thread([this, period_ms]() {
+            while (tf_thread_running_.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(period_ms));
+                if (!tf_thread_running_.load()) break;
+                if (!getRosNodeControl()->sendOdomBaseLinkTF()) continue;
+
+                std::lock_guard<std::mutex> lock(tf_cache_mutex_);
+                if (!has_cached_tf_) continue;
+
+                auto now = std::chrono::steady_clock::now();
+                double elapsed = std::chrono::duration<double>(now - cached_tf_.cache_time).count();
+                double new_sec = cached_tf_.orig_stamp_sec + elapsed;
+
+                // Ensure strictly monotonic timestamps
+                if (new_sec <= cached_tf_.last_published_sec) {
+                    new_sec = cached_tf_.last_published_sec + 0.001;
+                }
+                cached_tf_.last_published_sec = new_sec;
+
+                auto tf_copy = cached_tf_.msg;
+                // Convert new_sec to ROS time
+                int32_t sec = static_cast<int32_t>(new_sec);
+                uint32_t nanosec = static_cast<uint32_t>((new_sec - sec) * 1e9);
+                tf_copy.header.stamp.sec = sec;
+                tf_copy.header.stamp.nanosec = nanosec;
+                tf_broadcaster->sendTransform(tf_copy);
+            }
+        });
+    }
+
+    void stopTfExtraPublishTimer() {
+        tf_thread_running_.store(false);
+        if (tf_thread_.joinable()) {
+            tf_thread_.join();
+        }
+    }
+    #endif
+
     #ifdef ROS1
         void initialize_publishers(ros::NodeHandle& nh) {
             imu_pub_ = nh.advertise<ros::Imu>("odin1/imu", 4000);
@@ -1779,6 +1853,19 @@ private:
         rclcpp::Publisher<ros::Odometry>::SharedPtr wiwc_publisher_;
         camera_pose_visualization cameraposevisual_;
         std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster;
+        std::thread tf_thread_;
+        std::atomic<bool> tf_thread_running_{false};
+
+        // Cached TF for timer-based re-publishing
+        struct CachedTf {
+            geometry_msgs::msg::TransformStamped msg;
+            std::chrono::steady_clock::time_point cache_time;
+            double orig_stamp_sec{0.0};       // original device timestamp in seconds
+            double last_published_sec{0.0};   // monotonicity guard
+        };
+        std::mutex tf_cache_mutex_;
+        CachedTf cached_tf_;
+        bool has_cached_tf_ = false;
     #else
         ros::Publisher imu_pub_;
         ros::Publisher rgb_pub_;

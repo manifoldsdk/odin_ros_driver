@@ -40,6 +40,12 @@ register_keys:
   # ATTENTION: critical for rviz to show cloud_raw.
   send_odom_baselink_tf: 1 # 0: off; 1: on.
 
+  # Extra TF publish rate (Hz) for odom->base_link transform.
+  # 0: disabled (TF only published with odom data, at actual rate)
+  # >0: additionally publish TF at this rate using a timer (e.g. 50 for 50Hz)
+  # Useful for ROS2 Jazzy where tf2 has strict timestamp lookup
+  tf_extra_publish_rate: 0  # 0: off; >0: rate in Hz
+
   # raw dtof data
   senddtof: 1             # 0: off; 1: on
   cloud_raw_confidence_threshold: 35 # please refer to readme for more details
