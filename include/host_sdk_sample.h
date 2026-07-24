@@ -322,7 +322,7 @@ public:
         #else
             imu_msg.header.stamp = make_aligned_stamp(stream->stamp);
         #endif
-        imu_msg.header.frame_id = "imu_link";
+        imu_msg.header.frame_id = "imu";
 
         imu_msg.linear_acceleration.y = -1 * stream->accel_x;
         imu_msg.linear_acceleration.x = stream->accel_y;
@@ -578,7 +578,7 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
          
         // Create and publish RGB point cloud
         PointCloud2Msg output_msg;
-        output_msg.header.frame_id = "odin1_base_link";
+        output_msg.header.frame_id = "lidar";
         output_msg.header.stamp = rgb_msg->header.stamp; // Use original image timestamp
         output_msg.height = 1;
         output_msg.width = valid_point_num;
@@ -647,7 +647,7 @@ void publishIntensityCloud(capture_Image_List_t* stream, int idx)
     #endif
 
     // Set message header
-    msg->header.frame_id = "odin1_base_link";
+    msg->header.frame_id = "lidar";
     #ifdef ROS2
         msg->header.stamp = make_aligned_stamp(cloud.timestamp, node_);
     #else
@@ -1223,8 +1223,11 @@ void publishRgb(capture_Image_List_t *stream) {
         
 #ifdef ROS2
         wiwc_publisher_->publish(msg);
+#else
+        wiwc_publisher_.publish(msg);
+#endif
 
-        // Cache extrinsics and publish til as static TF
+        // Cache extrinsics for til/wc TF computation in publishOdometry
         {
             // Build T_IL (IMU/body to LiDAR) from twist.covariance
             Eigen::Matrix4d T_IL = Eigen::Matrix4d::Identity();
@@ -1250,9 +1253,6 @@ void publishRgb(capture_Image_List_t *stream) {
                 has_cached_extrinsics_ = true;
             }
         }
-#else
-        wiwc_publisher_.publish(msg);
-#endif
     }
 
     void publishOdometry(capture_Image_List_t* stream, OdometryType odom_type, bool show_path, bool show_camerapose) {
@@ -1264,7 +1264,7 @@ void publishRgb(capture_Image_List_t *stream) {
 #endif
         
             msg.header.frame_id = "odom";
-            msg.child_frame_id = "odin1_base_link";
+            msg.child_frame_id = "imu";
 
             //RCLCPP_INFO(rclcpp::get_logger("device_cb"), "odom %ld",odom_data->timestamp_ns);
 
@@ -1356,7 +1356,7 @@ void publishRgb(capture_Image_List_t *stream) {
                         geometry_msgs::msg::TransformStamped transformStamped;
                         transformStamped.header.stamp = msg.header.stamp;
                         transformStamped.header.frame_id = "odom";
-                        transformStamped.child_frame_id = "odin1_base_link";
+                        transformStamped.child_frame_id = "imu";
                         transformStamped.transform.translation.x = msg.pose.pose.position.x;
                         transformStamped.transform.translation.y = msg.pose.pose.position.y;
                         transformStamped.transform.translation.z = msg.pose.pose.position.z;
@@ -1391,18 +1391,16 @@ void publishRgb(capture_Image_List_t *stream) {
                             tf_broadcaster->sendTransform(transformStamped);
                         }
 
-                        // Publish wc (odom -> camera_0) and til (odin1_base_link -> lidar)
-                        // at same timestamp as wi
+                        // Publish til (imu -> lidar) and wc (odom -> camera_0)
                         {
                             std::lock_guard<std::mutex> lock(extrinsics_mutex_);
                             if (has_cached_extrinsics_) {
-                                // til: odin1_base_link -> lidar (dynamic extrinsic)
+                                // til: imu -> lidar (dynamic extrinsic from wiwc)
                                 Eigen::Quaterniond q_til(cached_T_base_lidar_.block<3,3>(0,0));
                                 q_til.normalize();
 
                                 geometry_msgs::msg::TransformStamped tf_til;
-                                tf_til.header.stamp = msg.header.stamp;
-                                tf_til.header.frame_id = "odin1_base_link";
+                                tf_til.header.frame_id = "imu";
                                 tf_til.child_frame_id = "lidar";
                                 tf_til.transform.translation.x = cached_T_base_lidar_(0, 3);
                                 tf_til.transform.translation.y = cached_T_base_lidar_(1, 3);
@@ -1411,8 +1409,6 @@ void publishRgb(capture_Image_List_t *stream) {
                                 tf_til.transform.rotation.y = q_til.y();
                                 tf_til.transform.rotation.z = q_til.z();
                                 tf_til.transform.rotation.w = q_til.w();
-
-                                tf_broadcaster->sendTransform(tf_til);
 
                                 // wc: odom -> camera_0 (T_wc = T_wi * T_base_lidar * T_CL)
                                 Eigen::Matrix4d T_wi_mat = Eigen::Matrix4d::Identity();
@@ -1432,7 +1428,6 @@ void publishRgb(capture_Image_List_t *stream) {
                                 q_wc.normalize();
 
                                 geometry_msgs::msg::TransformStamped tf_wc;
-                                tf_wc.header.stamp = msg.header.stamp;
                                 tf_wc.header.frame_id = "odom";
                                 tf_wc.child_frame_id = "camera_0";
                                 tf_wc.transform.translation.x = T_wc(0, 3);
@@ -1443,7 +1438,31 @@ void publishRgb(capture_Image_List_t *stream) {
                                 tf_wc.transform.rotation.z = q_wc.z();
                                 tf_wc.transform.rotation.w = q_wc.w();
 
-                                tf_broadcaster->sendTransform(tf_wc);
+                                if (getRosNodeControl()->getTfExtraPublishRate() > 0) {
+                                    // Burst-publish over the next 200ms so tf2 can
+                                    // interpolate for clouds whose timestamp is ahead of odom
+                                    double base_sec = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9;
+                                    for (int i = 0; i <= 10; ++i) {
+                                        double t_sec = base_sec + i * 0.020;  // 0, 20, ... 200 ms
+                                        int32_t s = static_cast<int32_t>(t_sec);
+                                        uint32_t ns = static_cast<uint32_t>((t_sec - s) * 1e9);
+
+                                        auto til_copy = tf_til;
+                                        til_copy.header.stamp.sec = s;
+                                        til_copy.header.stamp.nanosec = ns;
+                                        tf_broadcaster->sendTransform(til_copy);
+
+                                        auto wc_copy = tf_wc;
+                                        wc_copy.header.stamp.sec = s;
+                                        wc_copy.header.stamp.nanosec = ns;
+                                        tf_broadcaster->sendTransform(wc_copy);
+                                    }
+                                } else {
+                                    tf_til.header.stamp = msg.header.stamp;
+                                    tf_wc.header.stamp = msg.header.stamp;
+                                    tf_broadcaster->sendTransform(tf_til);
+                                    tf_broadcaster->sendTransform(tf_wc);
+                                }
                             }
                         }
                     }
@@ -1533,7 +1552,7 @@ void publishRgb(capture_Image_List_t *stream) {
                         geometry_msgs::TransformStamped transformStamped;
                         transformStamped.header.stamp = msg.header.stamp;
                         transformStamped.header.frame_id = "odom";
-                        transformStamped.child_frame_id = "odin1_base_link";
+                        transformStamped.child_frame_id = "imu";
                         transformStamped.transform.translation.x = msg.pose.pose.position.x;
                         transformStamped.transform.translation.y = msg.pose.pose.position.y;
                         transformStamped.transform.translation.z = msg.pose.pose.position.z;
@@ -1542,6 +1561,57 @@ void publishRgb(capture_Image_List_t *stream) {
                         transformStamped.transform.rotation.z = msg.pose.pose.orientation.z;
                         transformStamped.transform.rotation.w = msg.pose.pose.orientation.w;
                         tf_broadcaster->sendTransform(transformStamped);
+
+                        // Publish til (imu -> lidar) and wc (odom -> camera_0)
+                        std::lock_guard<std::mutex> lock(extrinsics_mutex_);
+                        if (has_cached_extrinsics_) {
+                            // til: imu -> lidar (dynamic extrinsic from wiwc)
+                            Eigen::Quaterniond q_til(cached_T_base_lidar_.block<3,3>(0,0));
+                            q_til.normalize();
+
+                            geometry_msgs::TransformStamped tf_til;
+                            tf_til.header.stamp = msg.header.stamp;
+                            tf_til.header.frame_id = "imu";
+                            tf_til.child_frame_id = "lidar";
+                            tf_til.transform.translation.x = cached_T_base_lidar_(0, 3);
+                            tf_til.transform.translation.y = cached_T_base_lidar_(1, 3);
+                            tf_til.transform.translation.z = cached_T_base_lidar_(2, 3);
+                            tf_til.transform.rotation.x = q_til.x();
+                            tf_til.transform.rotation.y = q_til.y();
+                            tf_til.transform.rotation.z = q_til.z();
+                            tf_til.transform.rotation.w = q_til.w();
+                            tf_broadcaster->sendTransform(tf_til);
+
+                            // wc: odom -> camera_0 (T_wc = T_wi * T_base_lidar * T_CL)
+                            Eigen::Matrix4d T_wi_mat = Eigen::Matrix4d::Identity();
+                            Eigen::Quaterniond q_wi(
+                                msg.pose.pose.orientation.w,
+                                msg.pose.pose.orientation.x,
+                                msg.pose.pose.orientation.y,
+                                msg.pose.pose.orientation.z);
+                            q_wi.normalize();
+                            T_wi_mat.block<3,3>(0,0) = q_wi.toRotationMatrix();
+                            T_wi_mat(0,3) = msg.pose.pose.position.x;
+                            T_wi_mat(1,3) = msg.pose.pose.position.y;
+                            T_wi_mat(2,3) = msg.pose.pose.position.z;
+
+                            Eigen::Matrix4d T_wc = T_wi_mat * cached_T_base_lidar_ * cached_T_CL_;
+                            Eigen::Quaterniond q_wc(T_wc.block<3,3>(0,0));
+                            q_wc.normalize();
+
+                            geometry_msgs::TransformStamped tf_wc;
+                            tf_wc.header.stamp = msg.header.stamp;
+                            tf_wc.header.frame_id = "odom";
+                            tf_wc.child_frame_id = "camera_0";
+                            tf_wc.transform.translation.x = T_wc(0, 3);
+                            tf_wc.transform.translation.y = T_wc(1, 3);
+                            tf_wc.transform.translation.z = T_wc(2, 3);
+                            tf_wc.transform.rotation.x = q_wc.x();
+                            tf_wc.transform.rotation.y = q_wc.y();
+                            tf_wc.transform.rotation.z = q_wc.z();
+                            tf_wc.transform.rotation.w = q_wc.w();
+                            tf_broadcaster->sendTransform(tf_wc);
+                        }
                     }
                     odom_publisher_.publish(msg);
 
@@ -1886,6 +1956,30 @@ public:
                 tf_copy.header.stamp.sec = sec;
                 tf_copy.header.stamp.nanosec = nanosec;
                 tf_broadcaster->sendTransform(tf_copy);
+
+                // Also republish til (imu -> lidar) at the same timestamp so the
+                // odom -> imu -> lidar chain stays valid between odom updates
+                {
+                    std::lock_guard<std::mutex> ext_lock(extrinsics_mutex_);
+                    if (has_cached_extrinsics_) {
+                        Eigen::Quaterniond q_til(cached_T_base_lidar_.block<3,3>(0,0));
+                        q_til.normalize();
+
+                        geometry_msgs::msg::TransformStamped tf_til;
+                        tf_til.header.stamp.sec = sec;
+                        tf_til.header.stamp.nanosec = nanosec;
+                        tf_til.header.frame_id = "imu";
+                        tf_til.child_frame_id = "lidar";
+                        tf_til.transform.translation.x = cached_T_base_lidar_(0, 3);
+                        tf_til.transform.translation.y = cached_T_base_lidar_(1, 3);
+                        tf_til.transform.translation.z = cached_T_base_lidar_(2, 3);
+                        tf_til.transform.rotation.x = q_til.x();
+                        tf_til.transform.rotation.y = q_til.y();
+                        tf_til.transform.rotation.z = q_til.z();
+                        tf_til.transform.rotation.w = q_til.w();
+                        tf_broadcaster->sendTransform(tf_til);
+                    }
+                }
             }
         });
     }
@@ -1917,6 +2011,12 @@ public:
         }
     #endif
 
+    // Cached extrinsics from WIWC data for til/wc computation in publishOdometry
+    std::mutex extrinsics_mutex_;
+    Eigen::Matrix4d cached_T_base_lidar_ = Eigen::Matrix4d::Identity();  // imu -> lidar (T_IL inverse)
+    Eigen::Matrix4d cached_T_CL_ = Eigen::Matrix4d::Identity();
+    bool has_cached_extrinsics_ = false;
+
     #ifdef ROS2
         rclcpp::Node::SharedPtr node_;
         rclcpp::Publisher<ros::Imu>::SharedPtr imu_pub_;
@@ -1938,12 +2038,6 @@ public:
         std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster;
         std::thread tf_thread_;
         std::atomic<bool> tf_thread_running_{false};
-
-        // Cached extrinsics from WIWC data for til/wc computation in publishOdometry
-        std::mutex extrinsics_mutex_;
-        Eigen::Matrix4d cached_T_base_lidar_ = Eigen::Matrix4d::Identity();  // T_IL inverse
-        Eigen::Matrix4d cached_T_CL_ = Eigen::Matrix4d::Identity();
-        bool has_cached_extrinsics_ = false;
 
         // Cached TF for timer-based re-publishing
         struct CachedTf {

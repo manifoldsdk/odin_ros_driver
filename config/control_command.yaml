@@ -36,11 +36,11 @@ register_keys:
   # Odometry data
   sendodom: 1             # 0: off; 1: on
 
-  # TF from odom to base_link. Leave it on unless you specifically need it off.
+  # TF from odom to imu. Leave it on unless you specifically need it off.
   # ATTENTION: critical for rviz to show cloud_raw.
   send_odom_baselink_tf: 1 # 0: off; 1: on.
 
-  # Extra TF publish rate (Hz) for odom->base_link transform.
+  # Extra TF publish rate (Hz) for odom->imu transform.
   # 0: disabled (TF only published with odom data, at actual rate)
   # >0: additionally publish TF at this rate using a timer (e.g. 50 for 50Hz)
   # Useful for ROS2 Jazzy where tf2 has strict timestamp lookup

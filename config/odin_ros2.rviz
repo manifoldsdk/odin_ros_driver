@@ -392,7 +392,7 @@ Visualization Manager:
       Frame Timeout: 15
       Frames:
         All Enabled: true
-        odin1_base_link:
+        imu:
           Value: true
         odom:
           Value: true
@@ -403,7 +403,7 @@ Visualization Manager:
       Show Names: false
       Tree:
         odom:
-          odin1_base_link:
+          imu:
             {}
       Update Interval: 0
       Value: true
