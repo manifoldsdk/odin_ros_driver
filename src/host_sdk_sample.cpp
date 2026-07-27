@@ -14,6 +14,7 @@ limitations under the License.
 #include "host_sdk_sample.h"
 #include "yaml_parser.h"
 #include "rawCloudRender.h"
+#include "odin_calib_path.h"
 #include <filesystem> 
 #include <thread>
 #include <string>
@@ -59,7 +60,7 @@ limitations under the License.
     #include "odin_ros_driver/SetAe.h"
     #include "odin_ros_driver/SetAwb.h"
 #endif
-#define ros_driver_version "0.13.0"
+#define ros_driver_version "0.13.1"
 #define required_firmware_version_major 0
 #define required_firmware_version_minor 13
 #define required_firmware_version_patch 0
@@ -847,7 +848,6 @@ std::string get_package_source_directory() {
     return path.string();
 }
 
-
 std::string get_package_path(const std::string& package_name) {
     #ifdef ROS2
         return ament_index_cpp::get_package_share_directory(package_name);
@@ -1326,11 +1326,13 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
 	#else
 	    config_dir = ros::package::getPath(package_name) + "/config";
 	#endif
-   		 std::cout << "config_dir"<< config_dir <<std::endl;
         #ifdef ROS2
-            RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Calibration files will be saved to: %s", config_dir.c_str());
+            RCLCPP_INFO(rclcpp::get_logger("device_cb"),
+                        "========== [CALIB] SAVE DIR (primary): %s | BACKUP DIR: %s ==========",
+                        odin_ros_driver::GetOdinRuntimeDir().c_str(), config_dir.c_str());
         #else
-            ROS_INFO("Calibration files will be saved to: %s", config_dir.c_str());
+            ROS_INFO("========== [CALIB] SAVE DIR (primary): %s | BACKUP DIR: %s ==========",
+                     odin_ros_driver::GetOdinRuntimeDir().c_str(), config_dir.c_str());
         #endif
 
         std::filesystem::path per_con_log_root_dir;
@@ -1523,10 +1525,19 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             }
         }
         
-        std::string calib_config = config_dir + "/calib.yaml";
+        // Primary calib storage: writable runtime dir (~/.ros/odin_ros_driver by default),
+        // independent of the source/install tree so it works for both ROS1 and ROS2.
+        std::string calib_runtime_dir = odin_ros_driver::GetOdinRuntimeDir();
+        std::error_code ec_mkdir;
+        std::filesystem::create_directories(calib_runtime_dir, ec_mkdir);
+
+        std::string calib_config = calib_runtime_dir + "/calib.yaml";
         calib_file_ = calib_config;
-        if (get_calib_file) {
-            if (lidar_get_calib_file(odinDevice, config_dir.c_str())) {
+        // Also fetch when the calib file is missing at the target path, so a resume
+        // (STREAM_STOPPED) on a fresh runtime dir still produces calib.yaml.
+        bool need_calib_file = get_calib_file || !std::filesystem::exists(calib_config);
+        if (need_calib_file) {
+            if (lidar_get_calib_file(odinDevice, calib_runtime_dir.c_str())) {
                 #ifdef ROS2
                     RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Failed to get calibration file");
                 #else
@@ -1537,7 +1548,14 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                 odinDevice = nullptr;
                 return;
             }
-            
+
+            // Print the primary save path
+            #ifdef ROS2
+                RCLCPP_INFO(rclcpp::get_logger("device_cb"), "========== [CALIB] SAVED -> %s ==========", calib_config.c_str());
+            #else
+                ROS_INFO("========== [CALIB] SAVED -> %s ==========", calib_config.c_str());
+            #endif
+
             #ifdef ROS2
                 RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Successfully retrieved calibration files");
             #else
@@ -1549,6 +1567,28 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             #else
                 ROS_INFO("Skipping calibration retrieval for current device state");
             #endif
+        }
+
+        // Always mirror the primary calib to the package config dir as a backup,
+        // regardless of whether it was freshly fetched or reused (resume case).
+        if (std::filesystem::exists(calib_config)) {
+            try {
+                std::filesystem::create_directories(config_dir);
+                std::filesystem::path backup_path = std::filesystem::path(config_dir) / "calib.yaml";
+                std::filesystem::copy_file(calib_config, backup_path,
+                    std::filesystem::copy_options::overwrite_existing);
+                #ifdef ROS2
+                    RCLCPP_INFO(rclcpp::get_logger("device_cb"), "========== [CALIB] BACKUP -> %s ==========", backup_path.string().c_str());
+                #else
+                    ROS_INFO("========== [CALIB] BACKUP -> %s ==========", backup_path.string().c_str());
+                #endif
+            } catch (const std::exception& e) {
+                #ifdef ROS2
+                    RCLCPP_WARN(rclcpp::get_logger("device_cb"), "Failed to save calibration backup to config dir: %s", e.what());
+                #else
+                    ROS_WARN("Failed to save calibration backup to config dir: %s", e.what());
+                #endif
+            }
         }
         
         // Push device identity / version into the binary data logger's info.txt.
@@ -1897,9 +1937,23 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             ROS_INFO("Command interface ready. Use: echo 'set save_map 1' > %s", g_command_file_path.c_str());
         #endif 
         
-        bool load_status = g_ros_object->loadCameraParams(calib_config);
-        if (g_sendrgb_undistort &&  load_status == 0) {
-            g_ros_object->buildUndistortMap();
+        if (std::filesystem::exists(calib_config)) {
+            #ifdef ROS2
+                RCLCPP_INFO(rclcpp::get_logger("device_cb"), "========== [CALIB] READ <- %s ==========", calib_config.c_str());
+            #else
+                ROS_INFO("========== [CALIB] READ <- %s ==========", calib_config.c_str());
+            #endif
+            bool load_status = g_ros_object->loadCameraParams(calib_config);
+            if (g_sendrgb_undistort && load_status == 0) {
+                g_ros_object->buildUndistortMap();
+            }
+        } else {
+            #ifdef ROS2
+                RCLCPP_WARN(rclcpp::get_logger("device_cb"),
+                            "========== [CALIB] NOT FOUND <- %s (skip camera params load) ==========", calib_config.c_str());
+            #else
+                ROS_WARN("========== [CALIB] NOT FOUND <- %s (skip camera params load) ==========", calib_config.c_str());
+            #endif
         }
 
         #ifdef ROS2

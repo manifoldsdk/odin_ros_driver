@@ -19,6 +19,7 @@ limitations under the License.
 #include <fstream>
 #include <string>
 #include "depth_image_ros2_node.hpp"
+#include "odin_calib_path.h"
 #include <rcpputils/filesystem_helper.hpp>
 bool fileExists(const std::string& filename) {
     struct stat buffer;
@@ -27,7 +28,7 @@ bool fileExists(const std::string& filename) {
 
 bool loadCalibParameters(std::shared_ptr<rclcpp::Node> node, const std::string& calib_file_path) {
     try {
-        RCLCPP_INFO(node->get_logger(), "Loading parameters from calib.yaml file: %s", calib_file_path.c_str());
+        RCLCPP_INFO(node->get_logger(), "========== [CALIB] READ <- %s ==========", calib_file_path.c_str());
         
         YAML::Node config = YAML::LoadFile(calib_file_path);
         
@@ -167,8 +168,11 @@ int main(int argc, char **argv)
     }
     
     std::string calib_file_path = node->declare_parameter<std::string>("calib_file_path", "");
+    if (calib_file_path.empty()) {
+        calib_file_path = odin_ros_driver::GetOdinCalibFile();
+    }
     
-    RCLCPP_INFO(node->get_logger(), "Waiting for calib.yaml file at: %s", calib_file_path.c_str());
+    RCLCPP_INFO(node->get_logger(), "========== [CALIB] WAIT <- %s ==========", calib_file_path.c_str());
     while(rclcpp::ok() && !fileExists(calib_file_path))
     {
         RCLCPP_INFO_THROTTLE(node->get_logger(), *node->get_clock(), 5000, "Still waiting for calib.yaml file...");

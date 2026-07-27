@@ -16,6 +16,7 @@ limitations under the License.
 #include <sys/stat.h>
 
 #include "depth_image_ros_node.hpp"
+#include "odin_calib_path.h"
 
 bool fileExists(const std::string& filename) {
     struct stat buffer;
@@ -37,8 +38,11 @@ int main(int argc, char **argv)
     
     std::string calib_file_path;
     pnh.param<std::string>("calib_file_path", calib_file_path, "");
+    if (calib_file_path.empty()) {
+        calib_file_path = odin_ros_driver::GetOdinCalibFile();
+    }
     
-    ROS_INFO("Waiting for calib.yaml file at: %s", calib_file_path.c_str());
+    ROS_INFO("========== [CALIB] WAIT <- %s ==========", calib_file_path.c_str());
     while(ros::ok() && !fileExists(calib_file_path))
     {
         ROS_INFO_THROTTLE(5, "Still waiting for calib.yaml file...");

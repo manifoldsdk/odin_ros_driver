@@ -19,12 +19,12 @@
 
     <node pkg="odin_ros_driver" type="pcd2depth_node" name="pcd2depth_node" output="screen" >
         <rosparam command="load" file="$(find odin_ros_driver)/config/control_command.yaml"/>
-        <param name="calib_file_path" value="$(find odin_ros_driver)/config/calib.yaml"/>
+        <!-- calib_file_path left unset: node falls back to the shared runtime dir (~/.ros/odin_ros_driver/calib.yaml) -->
     </node>
 
     <node pkg="odin_ros_driver" type="cloud_reprojection_node" name="cloud_reprojection_node" output="screen" >
         <rosparam command="load" file="$(find odin_ros_driver)/config/control_command.yaml"/>
-        <param name="calib_file_path" value="$(find odin_ros_driver)/config/calib.yaml"/>
+        <!-- calib_file_path left unset: node falls back to the shared runtime dir (~/.ros/odin_ros_driver/calib.yaml) -->
     </node>
 
     <!-- Image overlay node - overlays reprojected points on camera image -->
