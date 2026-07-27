@@ -18,7 +18,7 @@ This driver package provides core functionality for point cloud SLAM application
 
 ## 1. Version
 
-Current version: v0.13.0
+Current version: v0.13.1
 
 Required device firmware version: v0.13.0
 
@@ -799,6 +799,35 @@ sudo sysctl -w net.core.wmem_max=33554432
 No. ROS1 uses TCP-based publish/subscribe with a single `queue_size` parameter on each side, and has no QoS profile mismatch between publisher and subscriber. The ROS1 publisher path in this driver already sizes the IMU and `odometry_highfreq` publishers to `queue_size = 4000` (`include/host_sdk_sample.h`, see `initialize_publishers` ROS1 branch), and `rosbag record` uses TCP transport which is reliable by construction. As a result this specific drop pattern does not occur under ROS1; no additional configuration is required.
 
 不存在。ROS1 使用基于 TCP 的发布/订阅，发布端与订阅端各自只有一个 `queue_size` 参数，不存在 ROS2 那种 QoS profile 不匹配的问题。本驱动 ROS1 路径已经把 IMU 与 `odometry_highfreq` 的发布队列设置为 `queue_size = 4000`（见 `include/host_sdk_sample.h` 中 `initialize_publishers` 的 ROS1 分支），并且 `rosbag record` 使用 TCP 传输本身即可靠传递。因此在 ROS1 下不会出现该丢帧现象，也不需要额外配置。
+
+### 5.14 On Ubuntu 24.04 (ROS2 Jazzy) point clouds / TF fail to transform in RViz / Ubuntu 24.04（ROS2 Jazzy）下 RViz 点云 / TF 无法转换
+
+**Symptom / 现象**
+
+On Ubuntu 24.04 (ROS2 Jazzy), when the RViz **Fixed Frame** is set to `odom`, `cloud_raw` (in the `lidar` frame) fails to display and RViz reports a transform / extrapolation error for the `odom -> imu -> lidar` chain. On Ubuntu 22.04 (Humble) the same setup works.
+
+在 Ubuntu 24.04（ROS2 Jazzy）下，当 RViz 的 **Fixed Frame** 设为 `odom` 时，`cloud_raw`（`lidar` 系）无法显示，RViz 对 `odom -> imu -> lidar` 链条报 transform / 外推（extrapolation）错误。相同配置在 Ubuntu 22.04（Humble）下却正常。
+
+**Reason / 原因**
+
+The device point-cloud timestamp is typically ~100 ms ahead of the odometry timestamp. ROS2 Jazzy's tf2 performs a strict timestamp lookup and will not extrapolate, so when the TF is published only at the odometry rate (and only at the odometry timestamp), tf2 cannot find a transform bracketing the cloud timestamp and the lookup fails.
+
+设备点云时间戳通常比里程计时间戳超前约 100 ms。ROS2 Jazzy 的 tf2 采用严格的时间戳查找且不做外推（extrapolation），因此当 TF 只在里程计频率、且只按里程计时间戳发布时，tf2 找不到能覆盖点云时间戳的变换，查找失败。
+
+**Resolution / 解决方案**
+
+Set `tf_extra_publish_rate` to a value greater than `0` (e.g. `100`) in `config/control_command.yaml`. This starts an extra timer that keeps re-publishing the `odom -> imu` and `imu -> lidar` transforms at the configured rate with advancing timestamps, so tf2 always has a transform covering the cloud timestamp.
+
+在 `config/control_command.yaml` 中把 `tf_extra_publish_rate` 设为大于 `0` 的值（例如 `100`）。它会启动一个额外的定时器，按设定频率、以推进的时间戳持续补发 `odom -> imu` 与 `imu -> lidar` 变换，使 tf2 始终有覆盖点云时间戳的变换。
+
+```yaml
+# config/control_command.yaml
+tf_extra_publish_rate: 100  # 0: off; >0: rate in Hz (recommended on ROS2 Jazzy / Ubuntu 24.04)
+```
+
+On Ubuntu 22.04 (Humble) or ROS1 this is usually not required and the parameter can be left at `0`.
+
+在 Ubuntu 22.04（Humble）或 ROS1 下通常不需要该配置，参数可保持为 `0`。
 
 ## 6.  Contact Information​​
 
