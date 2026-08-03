@@ -1243,7 +1243,9 @@ void publishRgb(capture_Image_List_t *stream) {
             }
             T_CL(3, 0) = 0.0; T_CL(3, 1) = 0.0; T_CL(3, 2) = 0.0; T_CL(3, 3) = 1.0;
 
-            Eigen::Matrix4d T_base_lidar = T_IL.inverse();
+            // T_IL from SDK is body_T_lidar (imu -> lidar, pose of lidar in imu frame,
+            // matches the fixed extrinsic spec T^imu_lidar), use it directly without inverting
+            Eigen::Matrix4d T_base_lidar = T_IL;
 
             // Cache for use in publishOdometry (til and wc computation)
             {
@@ -1410,7 +1412,9 @@ void publishRgb(capture_Image_List_t *stream) {
                                 tf_til.transform.rotation.z = q_til.z();
                                 tf_til.transform.rotation.w = q_til.w();
 
-                                // wc: odom -> camera_0 (T_wc = T_wi * T_base_lidar * T_CL)
+                                // wc: odom -> camera_0 (T_wc = T_wi * T_base_lidar * T_CL^-1)
+                                // cached_T_CL_ is Tcl (camera <- lidar, optical convention: z fwd, x right, y down),
+                                // the chain needs T_lidar_camera (lidar <- camera), so invert it here
                                 Eigen::Matrix4d T_wi_mat = Eigen::Matrix4d::Identity();
                                 Eigen::Quaterniond q_wi(
                                     msg.pose.pose.orientation.w,
@@ -1423,7 +1427,7 @@ void publishRgb(capture_Image_List_t *stream) {
                                 T_wi_mat(1,3) = msg.pose.pose.position.y;
                                 T_wi_mat(2,3) = msg.pose.pose.position.z;
 
-                                Eigen::Matrix4d T_wc = T_wi_mat * cached_T_base_lidar_ * cached_T_CL_;
+                                Eigen::Matrix4d T_wc = T_wi_mat * cached_T_base_lidar_ * cached_T_CL_.inverse();
                                 Eigen::Quaterniond q_wc(T_wc.block<3,3>(0,0));
                                 q_wc.normalize();
 
@@ -1582,7 +1586,9 @@ void publishRgb(capture_Image_List_t *stream) {
                             tf_til.transform.rotation.w = q_til.w();
                             tf_broadcaster->sendTransform(tf_til);
 
-                            // wc: odom -> camera_0 (T_wc = T_wi * T_base_lidar * T_CL)
+                            // wc: odom -> camera_0 (T_wc = T_wi * T_base_lidar * T_CL^-1)
+                            // cached_T_CL_ is Tcl (camera <- lidar, optical convention: z fwd, x right, y down),
+                            // the chain needs T_lidar_camera (lidar <- camera), so invert it here
                             Eigen::Matrix4d T_wi_mat = Eigen::Matrix4d::Identity();
                             Eigen::Quaterniond q_wi(
                                 msg.pose.pose.orientation.w,
@@ -1595,7 +1601,7 @@ void publishRgb(capture_Image_List_t *stream) {
                             T_wi_mat(1,3) = msg.pose.pose.position.y;
                             T_wi_mat(2,3) = msg.pose.pose.position.z;
 
-                            Eigen::Matrix4d T_wc = T_wi_mat * cached_T_base_lidar_ * cached_T_CL_;
+                            Eigen::Matrix4d T_wc = T_wi_mat * cached_T_base_lidar_ * cached_T_CL_.inverse();
                             Eigen::Quaterniond q_wc(T_wc.block<3,3>(0,0));
                             q_wc.normalize();
 
