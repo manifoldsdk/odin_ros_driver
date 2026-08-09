@@ -60,7 +60,7 @@ limitations under the License.
     #include "odin_ros_driver/SetAe.h"
     #include "odin_ros_driver/SetAwb.h"
 #endif
-#define ros_driver_version "0.13.1"
+#define ros_driver_version "0.14.0"
 #define required_firmware_version_major 0
 #define required_firmware_version_minor 13
 #define required_firmware_version_patch 0

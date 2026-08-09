@@ -1,3 +1,7 @@
+0.14.1 20260809
+1. Fixed the SDK's USB memory leak issue
+2. Fixed the problem of 'transfer no mem' caused by USB buffer full during machine transfer
+
 0.13.1 20260724
 1.modify frame_id for image topic
 2.fix tf transform fail in ROS2 Jazzy

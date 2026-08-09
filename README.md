@@ -829,6 +829,55 @@ On Ubuntu 22.04 (Humble) or ROS1 this is usually not required and the parameter 
 
 在 Ubuntu 22.04（Humble）或 ROS1 下通常不需要该配置，参数可保持为 `0`。
 
+### 5.15 USB "transfer no mem" / "transfer error" on low-performance hosts / 低性能主机上出现 "transfer no mem" / "transfer error"
+
+**Symptom / 现象**
+
+```shell
+<ERROR>: submit x transfer fail LIBUSB_ERROR_NO_MEM.
+<ERROR>: transfer error: LIBUSB_TRANSFER_ERROR.
+```
+
+The driver runs fine on a powerful PC but, when deployed on a lower-performance board (e.g. an embedded ARM host), after a while the SDK starts reporting `LIBUSB_ERROR_NO_MEM` on send, followed by a cascade of `transfer error`. The module's sending rate is constant; the only thing that changed is the host the SDK runs on.
+
+驱动在性能强的 PC 上运行正常，但部署到性能较弱的板子（例如嵌入式 ARM 主机）上跑一段时间后，SDK 发送时开始报 `LIBUSB_ERROR_NO_MEM`，随后接连出现 `transfer error`。模组的发送速率是恒定的，唯一改变的条件是 SDK 运行在哪台机器上。
+
+**Reason / 原因**
+
+libusb async transfers queued to the kernel consume a limited per-device usbfs memory pool (`/sys/module/usbcore/parameters/usbfs_memory_mb`, default **16 MB**). On a slow host the single libusb event thread reaps completed transfers more slowly than new ones are submitted, so outstanding OUT (send) transfers pile up in the usbfs pool until submission fails with `LIBUSB_ERROR_NO_MEM`. Once submission starts failing, subsequent transfers report `LIBUSB_TRANSFER_ERROR`.
+
+libusb 异步传输提交到内核后，会占用每个设备有限的 usbfs 内存池（`/sys/module/usbcore/parameters/usbfs_memory_mb`，默认 **16 MB**）。在慢主机上，单一的 libusb 事件线程回收已完成传输的速度跟不上新传输的提交速度，于是在途的 OUT（发送）传输在 usbfs 池中不断堆积，直到提交失败并返回 `LIBUSB_ERROR_NO_MEM`。一旦提交开始失败，后续传输就会报 `LIBUSB_TRANSFER_ERROR`。
+
+**Resolution / 解决方案**
+
+1. Raise the usbfs memory limit at runtime (takes effect immediately, resets on reboot) / 在运行时调大 usbfs 内存上限（立即生效，重启后失效）：
+
+```shell
+# Check current value / 查看当前值 (default 16)
+cat /sys/module/usbcore/parameters/usbfs_memory_mb
+
+# Raise to 128 MB / 调大到 128 MB
+echo 128 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
+```
+
+2. Make it persistent across reboots / 让配置在重启后仍生效（二选一）：
+
+```shell
+# Option A: kernel boot parameter (edit GRUB / board bootargs)
+# 方式 A：内核启动参数（编辑 GRUB / 板子的 bootargs）
+usbcore.usbfs_memory_mb=128
+
+# Option B: modprobe config
+# 方式 B：modprobe 配置
+echo "options usbcore usbfs_memory_mb=128" | sudo tee /etc/modprobe.d/usbcore.conf
+```
+
+**Note / 说明**
+
+Raising `usbfs_memory_mb` is a mitigation that increases headroom. The SDK USB layer already bounds the number of in-flight OUT transfers (flow control) and releases transfer buffers on every terminal state to prevent the memory leaks that previously turned a transient error into a runaway. Keeping a larger usbfs pool (e.g. 128 MB) is still recommended on slow hosts or when transferring large files (e.g. relocalization maps).
+
+调大 `usbfs_memory_mb` 属于提高余量的缓解措施。SDK 的 USB 层已经对在途 OUT 传输数量做了上限限制（流控），并在每个终止状态释放传输缓冲，避免了此前"瞬时错误演变为不可恢复的内存泄漏雪崩"的问题。在慢主机上或传输大文件（如重定位地图）时，仍建议保留较大的 usbfs 池（例如 128 MB）。
+
 ## 6.  Contact Information​​
 
 You can contact our support through support@manifoldtech.cn
