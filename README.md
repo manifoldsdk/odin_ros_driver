@@ -878,6 +878,143 @@ Raising `usbfs_memory_mb` is a mitigation that increases headroom. The SDK USB l
 
 调大 `usbfs_memory_mb` 属于提高余量的缓解措施。SDK 的 USB 层已经对在途 OUT 传输数量做了上限限制（流控），并在每个终止状态释放传输缓冲，避免了此前"瞬时错误演变为不可恢复的内存泄漏雪崩"的问题。在慢主机上或传输大文件（如重定位地图）时，仍建议保留较大的 usbfs 池（例如 128 MB）。
 
+### 5.16 Driver crashes when publishing RGB due to cv_bridge / OpenCV version mismatch (without touching the system) / 出图时因 cv_bridge 与 OpenCV 版本不匹配崩溃（不动系统的解法）
+
+**Symptom / 现象**
+
+The driver connects and activates streams, but crashes (segfault / heap corruption) as soon as the first RGB frame is published. This is the same root cause as 5.9, seen when the host has **two OpenCV versions** installed: the ROS `cv_bridge` (from `/opt/ros/<distro>`) was compiled against one OpenCV (e.g. 4.2.0), while the driver links a different one (e.g. 4.5.4).
+
+驱动能连上、数据流也激活，但一发布第一帧 RGB 就崩溃（段错误 / 堆损坏）。这与 5.9 是同一根因，出现在主机装了**两个 OpenCV 版本**时：ROS 的 `cv_bridge`（来自 `/opt/ros/<distro>`）是针对某个 OpenCV（如 4.2.0）编译的，而驱动链接了另一个（如 4.5.4）。
+
+**Reason / 原因**
+
+With `sendrgb: 1`, the host decodes RGB with `cv::imdecode(...)` and publishes via `cv_bridge::toImageMsg()`. If the driver's OpenCV differs from `cv_bridge`'s, the same process loads two `libopencv_core` copies; a `cv::Mat` created by one and released by the other crosses an ABI boundary and corrupts the heap → crash on the first RGB frame.
+
+开启 `sendrgb: 1` 时，主机用 `cv::imdecode(...)` 解码 RGB，再经 `cv_bridge::toImageMsg()` 发布。若驱动的 OpenCV 与 `cv_bridge` 的不一致，同一进程会加载两份 `libopencv_core`；一个 `cv::Mat` 由其中一方创建、另一方释放，跨越 ABI 边界导致堆损坏 → 第一帧 RGB 到来时崩溃。
+
+**Which ROS distros are affected? / 哪些 ROS 版本会受影响？**
+
+This is **not** specific to any one ROS version. The crash happens whenever `cv_bridge`'s OpenCV ≠ the driver's OpenCV, regardless of ROS1 or ROS2. In practice, the most common trigger is on **Jetson / embedded platforms** where NVIDIA preinstalls a different OpenCV than the one ROS apt packages were compiled against.
+
+这**不是**某个 ROS 版本独有的问题。只要 `cv_bridge` 的 OpenCV ≠ 驱动的 OpenCV，无论 ROS1 还是 ROS2 都会崩。实际中最常见的触发场景是 **Jetson / 嵌入式平台**，NVIDIA 预装的 OpenCV 与 ROS apt 仓库编译 `cv_bridge` 时用的版本不一致。
+
+| ROS Distro | Type | vision_opencv branch | Typical system OpenCV |
+|---|---|---|---|
+| Kinetic (Ubuntu 16.04) | ROS1 | `kinetic` | 3.3.1 |
+| Melodic (Ubuntu 18.04) | ROS1 | `melodic` | 3.2 / 3.4 |
+| Noetic (Ubuntu 20.04) | ROS1 | `noetic` | 4.2.0 (apt) / 4.5.4 (Jetson) |
+| Foxy (Ubuntu 20.04) | ROS2 | `foxy` | 4.2.0 |
+| Galactic (Ubuntu 20.04) | ROS2 | `galactic` | 4.2.0 |
+| Humble (Ubuntu 22.04) | ROS2 | `humble` | 4.5.x |
+| Iron (Ubuntu 22.04) | ROS2 | `iron` | 4.5.x |
+| Jazzy (Ubuntu 24.04) | ROS2 | `rolling` | 4.5.x / 4.6.x |
+
+> If your system has only one OpenCV and it matches `cv_bridge`'s, you will **not** hit this bug — the driver builds and runs out of the box.
+> 如果系统只有一个 OpenCV 且与 `cv_bridge` 一致，你**不会**遇到此问题——驱动开箱即编即跑。
+
+**Resolution / 解决方案**
+
+5.9 suggests purging the extra OpenCV. If you must keep multiple OpenCV versions on the system, the alternative below **rebuilds `cv_bridge` inside the workspace** against the OpenCV the driver uses, so the driver and `cv_bridge` share one OpenCV. All artifacts go into the workspace only — **the system `/opt/ros` and system OpenCV are never modified**.
+
+5.9 的做法是卸载多余的 OpenCV。如果你必须在系统上保留多个 OpenCV 版本，可用下面的替代方案：**在工作区内基于驱动所用的 OpenCV 重新编译 `cv_bridge`**，让驱动与 `cv_bridge` 使用同一份 OpenCV。所有产物只落在工作区内，**系统 `/opt/ros` 与系统 OpenCV 完全不会被改动**。
+
+The driver's `CMakeLists.txt` reads the OpenCV version recorded in `cv_bridge-extras.cmake` and pins the driver to that exact version. It prefers a `cv_bridge` from the current workspace / a sourced overlay over the one in `/opt/ros`. If no `cv_bridge` is provided by the workspace and the exact version is unavailable, it falls back to the system default OpenCV with a warning (so a self-consistent single-OpenCV machine still builds out of the box).
+
+驱动的 `CMakeLists.txt` 会读取 `cv_bridge-extras.cmake` 里记录的 OpenCV 版本，并把驱动锁定到该版本；查找时优先使用当前工作区 / 已 source 的 overlay 里的 `cv_bridge`，其次才是 `/opt/ros`。若工作区未提供 `cv_bridge` 且系统缺该精确版本，则回退到系统默认 OpenCV 并给出警告（因此单一、一致 OpenCV 的机器仍可开箱即编）。
+
+**Step 0 — Identify your ROS distro / 步骤零 —— 确认你的 ROS 发行版**
+
+```shell
+echo $ROS_DISTRO
+# Example output: noetic  (ROS1)
+# Example output: foxy    (ROS2)
+```
+
+Use the matching branch from the table above for all commands below. The examples use `$ROS_DISTRO` as a placeholder — replace it (or export it) with your actual distro name.
+
+以下命令中用 `$ROS_DISTRO` 作为占位符，请替换为你的实际发行版名称（或直接 `export ROS_DISTRO=<你的发行版>`）。
+
+**Step 1 — Download vision_opencv (matching your ROS distro branch) / 步骤一 —— 下载 vision_opencv（分支要与 ROS 发行版对应）**
+
+Clone it into the workspace `src/` next to `odin_ros_driver`. Use the branch matching your ROS distro from the table above.
+
+克隆到工作区 `src/` 下、与 `odin_ros_driver` 并列。分支要与你的 ROS 发行版对应（见上方表格）。
+
+```shell
+cd <your_workspace>/src
+git clone -b $ROS_DISTRO https://github.com/ros-perception/vision_opencv.git
+```
+
+> If `git clone -b $ROS_DISTRO` fails, your distro name may differ from the branch name (e.g. Jazzy → `rolling`). Check the table above and substitute the correct branch.
+> 如果 `git clone -b $ROS_DISTRO` 失败，可能是发行版名与分支名不一致（如 Jazzy → `rolling`）。请对照上方表格替换为正确的分支名。
+
+**Step 2 — Build cv_bridge FIRST, then build the driver / 步骤二 —— 先编 cv_bridge，再编驱动**
+
+**Order matters: `cv_bridge` must be built into the workspace before the driver.** The driver's `CMakeLists.txt` reads the workspace `cv_bridge-extras.cmake` at configure time to pin its OpenCV; if `cv_bridge` is not in the workspace yet, the driver only sees the system `cv_bridge` and links a mismatched OpenCV.
+
+**顺序很重要：必须先把 `cv_bridge` 编进工作区，再编驱动。** 驱动的 `CMakeLists.txt` 在配置阶段读取工作区的 `cv_bridge-extras.cmake` 来锁定 OpenCV；若此时工作区里还没有 `cv_bridge`，驱动只会看到系统 `cv_bridge`，从而链接到不匹配的 OpenCV。
+
+**ROS1 (catkin_make):**
+
+```shell
+# (1) Build cv_bridge into the workspace FIRST.
+#     先把 cv_bridge 编进工作区。
+source /opt/ros/$ROS_DISTRO/setup.bash
+cd <your_catkin_ws>
+catkin_make -DBUILD_SYSTEM=ROS1 -DCATKIN_WHITELIST_PACKAGES="cv_bridge" -j$(nproc)
+
+# (2) Then build the driver. It now finds the workspace cv_bridge and pins the
+#     driver's OpenCV to the exact same version (do NOT clean build/devel here).
+#     再编驱动。它会找到工作区的 cv_bridge 并把驱动 OpenCV 锁到同一版本（此步不要清 build/devel）。
+cd <your_catkin_ws>/src/odin_ros_driver/script
+./build_ros.sh
+```
+
+> **Simplest option / 最简做法**: a single full build compiles everything in the correct dependency order automatically — `catkin_make` builds `cv_bridge` (a dependency) before the driver, so you don't have to think about ordering:
+> 一条全量编译命令会**按依赖顺序自动**先编 `cv_bridge`、再编驱动，无需关心顺序：
+> ```shell
+> cd <your_catkin_ws> && catkin_make -DBUILD_SYSTEM=ROS1 -j$(nproc)
+> ```
+
+**ROS2 (colcon):**
+
+```shell
+# (1) Build cv_bridge into the workspace FIRST.
+#     先把 cv_bridge 编进工作区。
+source /opt/ros/$ROS_DISTRO/setup.bash
+cd <your_ros2_ws>
+colcon build --packages-select cv_bridge
+
+# (2) Then build the driver. Source the overlay so the driver finds the workspace cv_bridge.
+#     再编驱动。先 source overlay，让驱动找到工作区的 cv_bridge。
+source <your_ros2_ws>/install/setup.bash
+colcon build --packages-select odin_ros_driver
+```
+
+**Verification / 验证**
+
+```shell
+# ROS1
+source /opt/ros/$ROS_DISTRO/setup.bash
+source <your_catkin_ws>/devel/setup.bash
+ldd <your_catkin_ws>/devel/lib/odin_ros_driver/host_sdk_sample | grep -iE 'cv_bridge|opencv_core'
+
+# ROS2
+source /opt/ros/$ROS_DISTRO/setup.bash
+source <your_ros2_ws>/install/setup.bash
+ldd <your_ros2_ws>/install/odin_ros_driver/lib/odin_ros_driver/host_sdk_sample | grep -iE 'cv_bridge|opencv_core'
+```
+
+- Before Step 2 (crash) / 步骤二之前（会崩）：`libcv_bridge.so => /opt/ros/$ROS_DISTRO/lib/...`, and a mismatched `libopencv_core.so.<old>` is mixed in / 且混入不匹配的 `libopencv_core.so.<旧版本>`。
+- After Step 2 (fixed) / 步骤二之后（已修复）：`libcv_bridge.so => <your_workspace>/...`, and all `libopencv_*` are a single consistent version / 且所有 `libopencv_*` 为同一个版本。
+
+Then run the driver and confirm `/odin1/image` publishes steadily without crashing.
+
+随后运行驱动，确认 `/odin1/image` 稳定发布且不再崩溃。
+
+> Important / 重要: run in a clean ROS environment; do not mix another ROS distro into `LD_LIBRARY_PATH` (e.g. don't source both noetic and foxy), or `cv_bridge` may resolve back to a mismatched OpenCV.
+> 请在干净的 ROS 环境中运行；不要把另一个 ROS 发行版混入 `LD_LIBRARY_PATH`（如同时 source noetic 和 foxy），否则 `cv_bridge` 可能又解析回不匹配的 OpenCV。
+
 ## 6.  Contact Information​​
 
 You can contact our support through support@manifoldtech.cn
