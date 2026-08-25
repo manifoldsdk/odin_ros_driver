@@ -529,9 +529,26 @@ int lidar_set_depth_parameter(device_handle device, const lidar_depth_para_t *pa
  * RGB frame rate is coupled with the DTOF frame rate. Only three frame-rate
  * tiers are supported (the fps field in lidar_rgb_para_t is multiplied by 10):
  *
- *   fps = 100  ->  10.264 Hz  (matches DTOF 10 Hz tier)
- *   fps = 145  ->  14.472 Hz  (matches DTOF 15 Hz tier)
- *   fps = 290  ->  28.920 Hz  (29 Hz mode; DTOF still outputs at 10 Hz)
+  ########################################################
+  # RGB camera configuration (format, resolution, frame rate)
+  # RGB 摄像头配置（格式、分辨率、帧率）
+  #
+  # Applied via lidar_set_rgb_parameter() before streaming starts.
+  # 在数据流启动前通过 lidar_set_rgb_parameter() 下发。
+  #
+  # ATTENTION: not all combinations are valid; invalid values will
+  # cause device connection failure. 无效组合会导致设备连接失败。
+  #
+  # RGB frame rate is coupled with the DTOF frame rate, so both must
+  # be set to one of the matching pairs below (3 tiers supported):
+  # RGB 帧率与 DTOF 帧率联动，二者需按下表配对设置（支持三档）：
+  #
+  #   rgb_fps | dtof_fps | RGB actual rate | DTOF actual rate
+  #   --------+----------+----------------+----------------
+  #   100     | 100      | 10.264 Hz      | 10.0 Hz
+  #   145     | 145      | 14.472 Hz      | 14.5 Hz
+  #   290     | 100      | 28.92 Hz       | 10.0 Hz
+  ########################################################
  *
  * An invalid combination will cause device connection failure.
  *

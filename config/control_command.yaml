@@ -53,19 +53,29 @@ register_keys:
   # dtof sensor frame rate. Supported values: 100 (10fps) or 145 (14.5fps)
   # Higher frame rate provides smoother point cloud data but may increase data bandwidth
   # Note: value is multiplied by 10 (e.g., 145 means 14.5fps)
-  dtof_fps: 100           # 100: 10fps; 145: 14.5fps 290: dtof 10hz + camera 29hz(not support)
+  dtof_fps: 100           # 100: 10fps; 
+                          # 145: 14.5fps 
 
-# RGB camera configuration (format, resolution, frame rate)
-  # Applied before streaming starts via lidar_set_rgb_parameter().
-  # Not all combinations are valid; invalid values will cause device connection failure.
-  # Supported combinations depend on firmware, see sdk/api/Host_USB_RGB_Config_Protocol.md
+  ########################################################
+  # RGB camera configuration (format, resolution, frame rate)
   # RGB 摄像头配置（格式、分辨率、帧率）
-  # 在数据流启动前通过 lidar_set_rgb_parameter() 下发，无效组合会导致设备连接失败
-  # 支持的组合取决于固件，详见 sdk/api/Host_USB_RGB_Config_Protocol.md
-  #RGB帧率受DTOF影响，设置前需要DTOF帧率匹配，目前支持三个档位
-  #RGB FPS{100},   // 10.264 Hz, dtof 10Hz 档
-  #RGB FPS{145},   // 14.472 Hz, dtof 15Hz 档
-  #RGB FPS{290},   // 28.92 Hz,  dtof 10Hz 档 (29Hz 模式 dtof 仍按 10Hz 出数)
+  #
+  # Applied via lidar_set_rgb_parameter() before streaming starts.
+  # 在数据流启动前通过 lidar_set_rgb_parameter() 下发。
+  #
+  # ATTENTION: not all combinations are valid; invalid values will
+  # cause device connection failure. 无效组合会导致设备连接失败。
+  #
+  # RGB frame rate is coupled with the DTOF frame rate, so both must
+  # be set to one of the matching pairs below (3 tiers supported):
+  # RGB 帧率与 DTOF 帧率联动，二者需按下表配对设置（支持三档）：
+  #
+  #   rgb_fps | dtof_fps | RGB actual rate | DTOF actual rate
+  #   --------+----------+----------------+----------------
+  #   100     | 100      | 10.264 Hz      | 10.0 Hz
+  #   145     | 145      | 14.472 Hz      | 14.5 Hz
+  #   290     | 100      | 28.92 Hz       | 10.0 Hz
+  ########################################################
 
   rgb_format: 1          # 0: NV12 ; 1: MJPEG(default)
   rgb_width: 1600        # Image width in pixels / 图像宽度（像素）
