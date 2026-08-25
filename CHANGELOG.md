@@ -1,3 +1,8 @@
+0.14.2 20260825
+1. Add RGB DTOF filter
+2. Fix USB disconnect deadlock issue
+3. Add RGB parameter configuration
+
 0.14.1 20260809
 1. Fixed the SDK's USB memory leak issue
 2. Fixed the problem of 'transfer no mem' caused by USB buffer full during machine transfer

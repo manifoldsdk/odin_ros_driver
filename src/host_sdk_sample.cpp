@@ -152,6 +152,12 @@ int g_save_log = 0;
 int g_cloud_raw_confidence_threshold = 35;
 int g_dtof_fps = 145;  // DTOF sensor frame rate: 100 (10fps) or 145 (14.5fps)
 
+// RGB camera configuration
+int g_rgb_format = 0;     // 0: NV12; 1: MJPEG
+int g_rgb_width = 1600;   // Image width in pixels
+int g_rgb_height = 1296;  // Image height in pixels
+int g_rgb_fps = 100;      // Frame rate * 10 (300 = 30fps)
+
 std::filesystem::path log_root_dir_;
 int g_custom_map_mode = 0;
 bool g_relocalization_success_msg_printed = false;
@@ -562,6 +568,29 @@ static void process_command_file() {
                         }).detach();
                     }
                     return;  // save_map=1 handled, skip the generic set path below
+                }
+
+                // Special handling for "spad_filter": host-side SPAD crosstalk filter
+                // toggle, not a device-side parameter, so call lidar_enable_spad_filter()
+                // directly instead of lidar_set_custom_parameter().
+                if (param_name == "spad_filter") {
+                    int ret = lidar_enable_spad_filter(value);
+                    if (ret == 0) {
+                        #ifdef ROS2
+                            RCLCPP_INFO(rclcpp::get_logger("command_processor"),
+                                       "Successfully set %s = %d", param_name.c_str(), value);
+                        #else
+                            ROS_INFO("Successfully set %s = %d", param_name.c_str(), value);
+                        #endif
+                    } else {
+                        #ifdef ROS2
+                            RCLCPP_ERROR(rclcpp::get_logger("command_processor"),
+                                        "Failed to set %s = %d, error: %d", param_name.c_str(), value, ret);
+                        #else
+                            ROS_ERROR("Failed to set %s = %d, error: %d", param_name.c_str(), value, ret);
+                        #endif
+                    }
+                    return;
                 }
 
                 // Generic path for all other parameters (and save_map=0 / save_map=N>1).
@@ -1683,6 +1712,31 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             ROS_INFO("DTOF sensor frame rate set to %.1f fps", g_dtof_fps / 10.0);
         #endif
 
+        // Set RGB camera configuration (format, resolution, frame rate)
+        // Must be called before lidar_start_stream() and lidar_activate_stream_type()
+        if (g_sendrgb) {
+            lidar_rgb_para_t rgbPara;
+            rgbPara.format = (lidar_rgb_format_e)g_rgb_format;
+            rgbPara.width  = (uint32_t)g_rgb_width;
+            rgbPara.height = (uint32_t)g_rgb_height;
+            rgbPara.fps    = (uint32_t)g_rgb_fps;
+            int rgb_rc = lidar_set_rgb_parameter(odinDevice, &rgbPara);
+            if (rgb_rc) {
+                #ifdef ROS2
+                    RCLCPP_WARN(rclcpp::get_logger("ros[host_sdk_sample]"),
+                        "set RGB parameter failed (rc=%d): format=%d, %dx%d@%d", rgb_rc, g_rgb_format, g_rgb_width, g_rgb_height, g_rgb_fps);
+                #else
+                    ROS_WARN("set RGB parameter failed (rc=%d): format=%d, %dx%d@%d", rgb_rc, g_rgb_format, g_rgb_width, g_rgb_height, g_rgb_fps);
+                #endif
+            } else {
+                #ifdef ROS2
+                    RCLCPP_INFO(rclcpp::get_logger("ros[host_sdk_sample]"),
+                        "RGB camera configured: format=%d, %dx%d@%.1ffps", g_rgb_format, g_rgb_width, g_rgb_height, g_rgb_fps / 10.0);
+                #else
+                    ROS_INFO("RGB camera configured: format=%d, %dx%d@%.1ffps", g_rgb_format, g_rgb_width, g_rgb_height, g_rgb_fps / 10.0);
+                #endif
+            }
+        }
 
         if (lidar_set_mode(odinDevice, type)) {
             #ifdef ROS2
@@ -2033,7 +2087,7 @@ int main(int argc, char *argv[])
     //
     // Response rc convention (all 4 services):
     //   0      success                          (success = true)
-    //   400..  device-side error, see lidar_ae_error_e
+    //   400..  device-side error, see lidar_ae_error_e / lidar_rgb_error_e
     //   -100   driver has not opened the device yet
     //   <0     other SDK-side error (USB / timeout / malformed reply)
     //
@@ -2287,6 +2341,10 @@ int main(int argc, char *argv[])
         g_cloud_raw_confidence_threshold = get_key_value("cloud_raw_confidence_threshold", 35);
         g_rosNodeControlImpl.setCloudRawConfidenceThreshold(g_cloud_raw_confidence_threshold);
         g_dtof_fps      = get_key_value("dtof_fps", 145);  // Read DTOF frame rate from config (100=10fps, 145=14.5fps)
+        g_rgb_format    = get_key_value("rgb_format", 0);    // 0: NV12; 1: MJPEG
+        g_rgb_width     = get_key_value("rgb_width", 1536);
+        g_rgb_height    = get_key_value("rgb_height", 1280);
+        g_rgb_fps       = get_key_value("rgb_fps", 300);      // 300 = 30fps
         g_sendodom      = get_key_value("sendodom", 1);
         g_send_odom_baselink_tf = get_key_value("send_odom_baselink_tf", 0);
         g_tf_extra_publish_rate = get_key_value("tf_extra_publish_rate", 0);

@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>odin_ros_driver</name>
-  <version>0.0.1</version>
+  <version>0.14.2</version>
   <description>ROS driver for Odin sensor</description>
   <maintainer email="oliveiratang@manifoldtech.cn">rlk</maintainer>
   <license>Apache 2.0</license>

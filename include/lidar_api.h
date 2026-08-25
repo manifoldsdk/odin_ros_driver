@@ -432,6 +432,21 @@ int lidar_get_custom_parameter(device_handle device, const char* param_name, int
  int lidar_get_mapping_result(device_handle device, const char* dest_dir, const char* file_name);
 
 /**
+ * @brief Retrieve device logs to the host.
+ *
+ * Requests the device to collect its logs and transfer them to the host. The
+ * resulting file is written into dest_dir.
+ *
+ * @param device   Device handle.
+ * @param dest_dir Destination directory on host (must exist).
+ * @return 0 on success, negative on failure.
+ *         -1: general error
+ *         -2: another transfer in progress
+ *         -3: transfer timeout/stall
+ */
+int lidar_get_logs(device_handle device, const char *dest_dir);
+
+/**
  * @brief Save the current map to a file on the host. Synchronous, all-in-one API.
  *
  * Internally drives the complete save-map state machine, so callers do not need
@@ -453,7 +468,7 @@ int lidar_get_custom_parameter(device_handle device, const char* param_name, int
  * @param dest_dir       Host directory to save the file into (must already exist).
  * @param file_name      File name (e.g. "map.bin").
  * @param gen_timeout_ms Maximum time (ms) to wait for the device to finish
- *                       generating the map. Pass 0 to use the default (120000 ms).
+ *                       generating the map. Pass 0 to use the default (300000 ms).
  * @return int
  *          0  success, file saved at dest_dir/file_name
  *         -1  invalid arguments (null device/dir, SDK not initialized, etc.)
@@ -503,6 +518,30 @@ int lidar_save_map(device_handle device,
 int lidar_set_depth_parameter(device_handle device, const lidar_depth_para_t *params);
 
 /**
+ * @brief Set RGB camera configuration (format, resolution, frame rate)
+ *
+ * Configures the RGB image sensor before streaming starts. Must be called
+ * after lidar_open_device() and before lidar_start_stream().
+ *
+ * The device replies with CMD_CODE_OK on success or CMD_CODE_FAIL if the
+ * requested combination is unsupported.
+ *
+ * RGB frame rate is coupled with the DTOF frame rate. Only three frame-rate
+ * tiers are supported (the fps field in lidar_rgb_para_t is multiplied by 10):
+ *
+ *   fps = 100  ->  10.264 Hz  (matches DTOF 10 Hz tier)
+ *   fps = 145  ->  14.472 Hz  (matches DTOF 15 Hz tier)
+ *   fps = 290  ->  28.920 Hz  (29 Hz mode; DTOF still outputs at 10 Hz)
+ *
+ * An invalid combination will cause device connection failure.
+ *
+ * @param device Handle to the target device
+ * @param params Pointer to RGB configuration parameters (see lidar_rgb_para_t)
+ * @return int 0 on success, negative error code on failure
+ */
+int lidar_set_rgb_parameter(device_handle device, const lidar_rgb_para_t *params);
+
+/**
  * @brief Enable or disable IMU smooth sending feature
  *
  * When enabled, IMU data will be sent at precise intervals (default 400Hz) 
@@ -524,6 +563,27 @@ int lidar_enable_imu_smooth_sending(int enable);
  * @return int 0 on success, -1 on failure
  */
 int lidar_set_imu_smooth_frequency(uint32_t frequency_hz);
+
+/**
+ * @brief Enable or disable SPAD crosstalk filter for DTOF point cloud
+ *
+ * When enabled, the SDK applies a multi-stage noise filter on raw DTOF
+ * point cloud data before delivering it to the user callback:
+ *   - String noise detection (gradient-based)
+ *   - Crosstalk detection (confidence-based edge point detection)
+ *   - Distance filtering (min/max range)
+ *   - FOV edge filtering (135 degrees)
+ *   - Intensity threshold filtering (distance-dependent)
+ *   - Confidence filtering (distance-dependent)
+ *
+ * Filtered points have their XYZ values set to 0.0 in the callback data.
+ * Only applies to the new 4-channel DTOF format (depth + xyz + intensity + confidence).
+ * Has no effect on the legacy 3-channel format.
+ *
+ * @param enable 1 to enable SPAD crosstalk filter, 0 to disable
+ * @return int 0 on success, -1 on failure (SDK not initialized)
+ */
+int lidar_enable_spad_filter(int enable);
 
 /**
  * @brief Reset the USB connection to the device
@@ -589,7 +649,7 @@ int lidar_send_user_data(device_handle device,
  * an internal mutex (the same mutex protecting other control commands).
  * Return value convention:
  *   == 0   success
- *   >  0   device-side error, see lidar_ae_error_e (400..405 or 0xFF)
+ *   >  0   device-side error, see lidar_ae_error_e / lidar_rgb_error_e
  *   <  0   SDK-side error (not initialised, bad argument, USB failure,
  *          response timeout, malformed reply, ...)
  *

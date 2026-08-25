@@ -804,104 +804,122 @@ void publishGrayUInt8(capture_Image_List_t *stream, int idx) {
 void publishRgb(capture_Image_List_t *stream) {
     buffer_List_t &image = stream->imageList[0];
 
-    // old version yuv data
-    if (image.length == image.width * image.height * 3 / 2) {
-        #ifdef ROS2
-            RCLCPP_INFO(rclcpp::get_logger("publishRgb"), "old format rgb data, please upgrade device firmware");
-        #else
-            ROS_INFO("old format rgb data, please upgrade device firmware");
-        #endif
-    } else {// new version jpeg data
+    cv::Mat decoded_image;
+    std::vector<uint8_t> raw_data;
 
+    if (image.format == LIDAR_RGB_FMT_NV12) {
+        // NV12 format: Y plane (width*height) + interleaved UV plane (width*height/2)
+        // Total size = width * height * 3 / 2
+        cv::Mat nv12_mat(image.height * 3 / 2, image.width, CV_8UC1, image.pAddr);
+        cv::cvtColor(nv12_mat, decoded_image, cv::COLOR_YUV2BGR_NV12);
+
+        // Store raw NV12 data for logging
+        raw_data.assign(static_cast<uint8_t*>(image.pAddr),
+                        static_cast<uint8_t*>(image.pAddr) + image.length);
+    } else {
+        // MJPEG format: decode JPEG data to bgr8
         std::vector<uint8_t> jpeg_data(static_cast<uint8_t*>(image.pAddr),
                                         static_cast<uint8_t*>(image.pAddr) + image.length);
-
-        // convert back to bgr8                                                
-        cv::Mat decoded_image = cv::imdecode(jpeg_data, cv::IMREAD_COLOR);
-
-        cv_bridge::CvImage cv_image;
-        #ifdef ROS2
-            cv_image.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp, node_);
-        #else
-            cv_image.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp);
-        #endif
-        cv_image.encoding = "bgr8";
-        cv_image.image = decoded_image;
-
-        if (g_sendcloudrender) {
-            std::lock_guard<std::mutex> lock(rgb_queue_mutex_);
-            if (rgb_image_queue_.size() >= 10) {
-                rgb_image_queue_.pop_front();
-            }
-            rgb_image_queue_.push_back(cv_image.toImageMsg());
-            }        
-
-        // Enqueue binary logging for image
-        if (data_logger_) {
-            const uint32_t idx_now = image_index_.fetch_add(1, std::memory_order_relaxed);
-            // Align image timestamp with the same policy as ROS publish path (NTP mode -> NTP time)
-            const double ts_sec = static_cast<double>(aligned_stamp_ns(stream->imageList[0].timestamp)) / 1e9;
-            const uint32_t jpeg_size = static_cast<uint32_t>(jpeg_data.size());
-            std::vector<uint8_t> blob;
-            blob.reserve(sizeof(uint32_t) + sizeof(double) + sizeof(uint32_t) + jpeg_size);
-            auto append_pod = [&](const auto& v) {
-                const uint8_t* p = reinterpret_cast<const uint8_t*>(&v);
-                blob.insert(blob.end(), p, p + sizeof(v));
-            };
-            append_pod(idx_now);
-            append_pod(ts_sec);
-            append_pod(jpeg_size);
-            blob.insert(blob.end(), jpeg_data.begin(), jpeg_data.end());
-            data_logger_->enqueueImageFrame(std::move(blob));
-        }
-
-        // undistort image
-        cv::Mat undistorted_image = cv::Mat::zeros(decoded_image.size(), decoded_image.type());
-        cv_bridge::CvImage cv_undistorted_image;
-
-        if (m_undistort_map_init_success) {
-            cv::remap(decoded_image, undistorted_image, m_undistort_map_x, m_undistort_map_y, cv::INTER_LINEAR);
-            #ifdef ROS2
-                cv_undistorted_image.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp, node_);
-            #else
-                cv_undistorted_image.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp);
-            #endif
-            cv_undistorted_image.encoding = "bgr8";
-            cv_undistorted_image.image = undistorted_image;
-        }
-
-        #ifdef ROS2
-        {
-            rgb_pub_->publish(*cv_image.toImageMsg());
-            if (m_undistort_map_init_success) {
-                undistort_rgb_pub_->publish(*cv_undistorted_image.toImageMsg());
-            }
-
-            // original jpeg - always publish as it's small
-            sensor_msgs::msg::CompressedImage jpeg_msg;
-            jpeg_msg.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp, node_);
-            jpeg_msg.format = "jpeg";
-            jpeg_msg.data = jpeg_data;
-
-            compressed_rgb_pub_->publish(jpeg_msg);
-        }
-        #else
-        {
-            rgb_pub_.publish(cv_image.toImageMsg());
-            if (m_undistort_map_init_success) {
-                undistort_rgb_pub_.publish(cv_undistorted_image.toImageMsg());
-            }
-
-            // original jpeg
-            sensor_msgs::CompressedImagePtr jpeg_msg(new sensor_msgs::CompressedImage());
-            jpeg_msg->header.stamp = make_aligned_stamp(stream->imageList[0].timestamp);
-            jpeg_msg->format = "jpeg";
-            jpeg_msg->data = jpeg_data;
-
-            compressed_rgb_pub_.publish(jpeg_msg);
-        }
-        #endif
+        decoded_image = cv::imdecode(jpeg_data, cv::IMREAD_COLOR);
+        raw_data = std::move(jpeg_data);
     }
+
+    if (decoded_image.empty()) {
+        #ifdef ROS2
+            RCLCPP_WARN(rclcpp::get_logger("publishRgb"), "Failed to decode RGB image (format=%d)", image.format);
+        #else
+            ROS_WARN("Failed to decode RGB image (format=%d)", image.format);
+        #endif
+        return;
+    }
+
+    cv_bridge::CvImage cv_image;
+    #ifdef ROS2
+        cv_image.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp, node_);
+    #else
+        cv_image.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp);
+    #endif
+    cv_image.encoding = "bgr8";
+    cv_image.image = decoded_image;
+
+    if (g_sendcloudrender) {
+        std::lock_guard<std::mutex> lock(rgb_queue_mutex_);
+        if (rgb_image_queue_.size() >= 10) {
+            rgb_image_queue_.pop_front();
+        }
+        rgb_image_queue_.push_back(cv_image.toImageMsg());
+    }
+
+    // Enqueue binary logging for image
+    if (data_logger_) {
+        const uint32_t idx_now = image_index_.fetch_add(1, std::memory_order_relaxed);
+        const double ts_sec = static_cast<double>(aligned_stamp_ns(stream->imageList[0].timestamp)) / 1e9;
+        const uint32_t raw_size = static_cast<uint32_t>(raw_data.size());
+        std::vector<uint8_t> blob;
+        blob.reserve(sizeof(uint32_t) + sizeof(double) + sizeof(uint32_t) + raw_size);
+        auto append_pod = [&](const auto& v) {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>(&v);
+            blob.insert(blob.end(), p, p + sizeof(v));
+        };
+        append_pod(idx_now);
+        append_pod(ts_sec);
+        append_pod(raw_size);
+        blob.insert(blob.end(), raw_data.begin(), raw_data.end());
+        data_logger_->enqueueImageFrame(std::move(blob));
+    }
+
+    // undistort image
+    cv::Mat undistorted_image = cv::Mat::zeros(decoded_image.size(), decoded_image.type());
+    cv_bridge::CvImage cv_undistorted_image;
+
+    if (m_undistort_map_init_success) {
+        cv::remap(decoded_image, undistorted_image, m_undistort_map_x, m_undistort_map_y, cv::INTER_LINEAR);
+        #ifdef ROS2
+            cv_undistorted_image.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp, node_);
+        #else
+            cv_undistorted_image.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp);
+        #endif
+        cv_undistorted_image.encoding = "bgr8";
+        cv_undistorted_image.image = undistorted_image;
+    }
+
+    #ifdef ROS2
+    {
+        rgb_pub_->publish(*cv_image.toImageMsg());
+        if (m_undistort_map_init_success) {
+            undistort_rgb_pub_->publish(*cv_undistorted_image.toImageMsg());
+        }
+
+        // Compressed image: MJPEG uses original JPEG data; NV12 publishes raw NV12 bytes
+        sensor_msgs::msg::CompressedImage compressed_msg;
+        compressed_msg.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp, node_);
+        if (image.format == LIDAR_RGB_FMT_NV12) {
+            compressed_msg.format = "nv12";
+        } else {
+            compressed_msg.format = "jpeg";
+        }
+        compressed_msg.data = raw_data;
+        compressed_rgb_pub_->publish(compressed_msg);
+    }
+    #else
+    {
+        rgb_pub_.publish(cv_image.toImageMsg());
+        if (m_undistort_map_init_success) {
+            undistort_rgb_pub_.publish(cv_undistorted_image.toImageMsg());
+        }
+
+        // Compressed image: MJPEG uses original JPEG data; NV12 publishes raw NV12 bytes
+        sensor_msgs::CompressedImagePtr compressed_msg(new sensor_msgs::CompressedImage());
+        compressed_msg->header.stamp = make_aligned_stamp(stream->imageList[0].timestamp);
+        if (image.format == LIDAR_RGB_FMT_NV12) {
+            compressed_msg->format = "nv12";
+        } else {
+            compressed_msg->format = "jpeg";
+        }
+        compressed_msg->data = raw_data;
+        compressed_rgb_pub_.publish(compressed_msg);
+    }
+    #endif
 
 }
 

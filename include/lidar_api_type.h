@@ -217,6 +217,7 @@ typedef struct {
     void* pAddr;
     uint32_t width;
     uint32_t height;
+    uint32_t format;  /**< Pixel format: 0=NV12, 1=MJPEG (see lidar_rgb_format_e); 0 for non-RGB frames */
 } buffer_List_t;
 
 typedef struct capture_Image_List_t {
@@ -335,6 +336,47 @@ typedef struct {
 } lidar_depth_para_t;
 
 /* ---------------------------------------------------------------------
+ * RGB camera configuration types.
+ *
+ * The host SDK sends the configuration through the standard USB control
+ * channel (CMD_CODE_CONTROL_CMD + SYS_CONTROL_RGB_SET_CONFIG). The
+ * device-side lydapp applies the settings to the RGB image sensor before
+ * streaming starts. See sdk/api/Host_USB_RGB_Config_Protocol.md for the
+ * wire-level details.
+ * ------------------------------------------------------------------- */
+
+/**
+ * @brief RGB camera pixel format
+ */
+typedef enum {
+    LIDAR_RGB_FMT_NV12  = 0, /**< NV12 (default, 1536x1280) */
+    LIDAR_RGB_FMT_MJPEG = 1, /**< Motion JPEG compressed */
+} lidar_rgb_format_e;
+
+/**
+ * @brief RGB camera configuration parameters
+ *
+ * Used with lidar_set_rgb_parameter(). Must be called after
+ * lidar_open_device() and before lidar_start_stream().
+ *
+ * Field meaning and valid ranges:
+ *   format : pixel format, see lidar_rgb_format_e
+ *   width  : image width in pixels (device-dependent, e.g. 1536, 1280, 640)
+ *   height : image height in pixels (device-dependent, e.g. 1280, 720, 480)
+ *   fps    : target frame rate * 10 (e.g. 300 = 30fps, 150 = 15fps)
+ *
+ * Not all combinations are valid. Invalid combinations return rc = -1
+ * with device-side CMD_CODE_FAIL. Use lidar_get_device_status() to
+ * verify the actual configured_odr after setting.
+ */
+typedef struct {
+    lidar_rgb_format_e format;
+    uint32_t width;
+    uint32_t height;
+    uint32_t fps;
+} lidar_rgb_para_t;
+
+/* ---------------------------------------------------------------------
  * Camera AE / AWB control types.
  *
  * The host SDK forwards AE/AWB requests through the USB control channel
@@ -435,6 +477,24 @@ typedef enum {
     LIDAR_AE_NO_RESPONSE          = 405, /**< ae_control UDP timeout */
     LIDAR_AE_UNKNOWN_OPCODE       = 0xFF,/**< status byte from ae_control */
 } lidar_ae_error_e;
+
+/**
+ * @brief RGB config device-side error codes.
+ *
+ * Mapped to positive return values of lidar_set_rgb_parameter when the
+ * device replies with CMD_CODE_FAIL, or returned directly by the SDK
+ * for host-side pre-checks (e.g. LIDAR_RGB_DTOF_NOT_CONFIGURED).
+ * See Host_USB_RGB_Config_Protocol.md section 8.
+ */
+typedef enum {
+    LIDAR_RGB_OK                     = 0,
+    LIDAR_RGB_BAD_REQUEST            = 500, /**< payload too short */
+    LIDAR_RGB_UNSUPPORTED_FORMAT     = 501, /**< format not NV12/MJPEG */
+    LIDAR_RGB_UNSUPPORTED_RESOLUTION = 502, /**< resolution not supported */
+    LIDAR_RGB_UNSUPPORTED_FPS        = 503, /**< fps not in capability table */
+    LIDAR_RGB_INVALID_COMBINATION    = 504, /**< rgb fps + dtof odr combo invalid */
+    LIDAR_RGB_DTOF_NOT_CONFIGURED    = 505, /**< dtof not set, call lidar_set_depth_parameter first */
+} lidar_rgb_error_e;
 
 #ifdef __cplusplus
 }
