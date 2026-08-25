@@ -125,7 +125,7 @@ double get_ptp_smoothed_offset() {
 
  // usb device
 static std::string TARGET_VENDOR = "2207";
-static std::string TARGET_PRODUCT = "0019";
+static std::string TARGET_PRODUCT = "001a";
 // Global configuration variables
 int g_sendrgb = 1;
 int g_sendimu = 1;
@@ -1765,26 +1765,10 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             ROS_INFO("Custom map mode: %d", g_custom_map_mode);
         #endif
 
-        if (g_custom_map_mode == 1) {
-            int save_map_init_value = 0;
-            int result = lidar_set_custom_parameter(odinDevice, "save_map", &save_map_init_value, sizeof(int));
-
-            if (result == 0) {
-                #ifdef ROS2
-                    RCLCPP_INFO(rclcpp::get_logger("command_processor"), 
-                            "Successfully initialized %s = %d", "save_map", save_map_init_value);
-                #else
-                    ROS_INFO("Successfully initialized %s = %d", "save_map", save_map_init_value);
-                #endif
-            } else {
-                #ifdef ROS2
-                    RCLCPP_ERROR(rclcpp::get_logger("command_processor"), 
-                                "Failed to initialize %s = %d, error: %d", "save_map", save_map_init_value, result);
-                #else
-                    ROS_ERROR("Failed to initialize %s = %d, error: %d", "save_map", save_map_init_value, result);
-                #endif
-            } 
-        } else if (g_custom_map_mode == 2) {
+        // save_map=0 initialization is deferred to after lidar_start_stream()
+        // because the device only accepts this parameter when streaming is active.
+        // See the post-stream block below.
+        if (g_custom_map_mode == 2) {
             bool result = false;
             int retryTime = 3;
             if (g_relocalization_map_abs_path != "" && std::filesystem::exists(g_relocalization_map_abs_path)) {
@@ -1967,7 +1951,31 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         } else {
             lidar_deactivate_stream_type(odinDevice, LIDAR_DT_SLAM_CLOUD);
         }
-        
+
+        // Initialize save_map=0 after streaming is active, since the device
+        // only accepts this parameter when streaming is active. This clears
+        // any residual save_map=1 from a previous session.
+        if (g_custom_map_mode == 1) {
+            int save_map_init_value = 0;
+            int result = lidar_set_custom_parameter(odinDevice, "save_map", &save_map_init_value, sizeof(int));
+
+            if (result == 0) {
+                #ifdef ROS2
+                    RCLCPP_INFO(rclcpp::get_logger("device_cb"),
+                            "Successfully initialized %s = %d", "save_map", save_map_init_value);
+                #else
+                    ROS_INFO("Successfully initialized %s = %d", "save_map", save_map_init_value);
+                #endif
+            } else {
+                #ifdef ROS2
+                    RCLCPP_ERROR(rclcpp::get_logger("device_cb"),
+                                "Failed to initialize %s = %d, error: %d", "save_map", save_map_init_value, result);
+                #else
+                    ROS_ERROR("Failed to initialize %s = %d, error: %d", "save_map", save_map_init_value, result);
+                #endif
+            }
+        }
+
         software_connect_timing = false;
         deviceConnected = true;
         deviceDisconnected = false;

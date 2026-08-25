@@ -122,7 +122,7 @@ register_keys:
   showpath: 0             # 0: off; 1: on
   showcamerapose: 0       # 0: off; 1: on
   
-  custom_map_mode: 0      # 0: Odometry mode 1: SLAM mode 2: Relocalization mode
+  custom_map_mode: 1      # 0: Odometry mode 1: SLAM mode 2: Relocalization mode
   custom_init_pos: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
   custom_init_pose_search_radius: 4.0 # max position offset in meters, recommended <= 10
   custom_init_pose_max_rot_deg: 180.0 # max rotation offset in degrees, up to 180

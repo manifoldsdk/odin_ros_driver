@@ -103,6 +103,45 @@ private:
     std::unordered_set<std::string> allowed_key_w_float_val = {
         "overlay_alpha"
     };
+
+    // Whitelist of all recognized integer-valued keys.
+    // Any key not in this set (and not custom_*, string, or float) will trigger an error.
+    std::unordered_set<std::string> allowed_key_w_int_val = {
+        "streamctrl",
+        "sendrgbcompressed",
+        "sendrgb",
+        "sendrgbundistort",
+        "sendimu",
+        "enable_imu_smooth",
+        "imu_smooth_frequency",
+        "sendodom",
+        "send_odom_baselink_tf",
+        "tf_extra_publish_rate",
+        "senddtof",
+        "cloud_raw_confidence_threshold",
+        "dtof_fps",
+        "rgb_format",
+        "rgb_width",
+        "rgb_height",
+        "rgb_fps",
+        "sendcloudslam",
+        "sendcloudrender",
+        "senddepth",
+        "sendreprojection",
+        "sendoverlay",
+        "recorddata",
+        "devstatuslog",
+        "save_log",
+        "pubintensitygray",
+        "showpath",
+        "showcamerapose",
+        "strict_usb3.0_check",
+        "use_host_ros_time",
+        "showfps",
+        "log_devel",
+        "sendimagemask",
+        "resetalgo"
+    };
 };
 
 }
