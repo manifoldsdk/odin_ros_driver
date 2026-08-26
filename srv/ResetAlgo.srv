@@ -1,0 +1,8 @@
+# Send algorithm reset command to the Odin device.
+#
+# value == 1 : send algo_reset command.
+# other      : forwarded as "algo_reset" custom parameter.
+int32 value
+---
+bool success            # true if rc == 0
+int32 rc                # 0=ok, see lidar_set_custom_parameter error codes

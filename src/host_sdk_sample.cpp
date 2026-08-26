@@ -51,6 +51,9 @@ limitations under the License.
     #include "odin_ros_driver/srv/get_awb.hpp"
     #include "odin_ros_driver/srv/set_ae.hpp"
     #include "odin_ros_driver/srv/set_awb.hpp"
+    #include "odin_ros_driver/srv/get_device_logs.hpp"
+    #include "odin_ros_driver/srv/save_map.hpp"
+    #include "odin_ros_driver/srv/reset_algo.hpp"
 #else
     #include <ros/package.h>
     #include <ros/ros.h>
@@ -59,6 +62,9 @@ limitations under the License.
     #include "odin_ros_driver/GetAwb.h"
     #include "odin_ros_driver/SetAe.h"
     #include "odin_ros_driver/SetAwb.h"
+    #include "odin_ros_driver/GetDeviceLogs.h"
+    #include "odin_ros_driver/SaveMap.h"
+    #include "odin_ros_driver/ResetAlgo.h"
 #endif
 #define ros_driver_version "0.14.0"
 #define required_firmware_version_major 0
@@ -125,7 +131,7 @@ double get_ptp_smoothed_offset() {
 
  // usb device
 static std::string TARGET_VENDOR = "2207";
-static std::string TARGET_PRODUCT = "001a";
+static std::string TARGET_PRODUCT = "0019";
 // Global configuration variables
 int g_sendrgb = 1;
 int g_sendimu = 1;
@@ -2181,9 +2187,92 @@ int main(int argc, char *argv[])
             res->success = (rc == 0);
         });
 
+    auto srv_get_device_logs = node->create_service<odin_ros_driver::srv::GetDeviceLogs>(
+        "/odin1/get_device_logs",
+        [](const std::shared_ptr<odin_ros_driver::srv::GetDeviceLogs::Request>  req,
+                 std::shared_ptr<odin_ros_driver::srv::GetDeviceLogs::Response> res) {
+            if (odinDevice == nullptr) {
+                res->success = false;
+                res->rc = -100;
+                return;
+            }
+            int rc = lidar_get_logs(odinDevice, req->dest_dir.c_str());
+            res->rc      = rc;
+            res->success = (rc == 0);
+        });
+
+    auto srv_save_map = node->create_service<odin_ros_driver::srv::SaveMap>(
+        "/odin1/save_map",
+        [](const std::shared_ptr<odin_ros_driver::srv::SaveMap::Request>  req,
+                 std::shared_ptr<odin_ros_driver::srv::SaveMap::Response> res) {
+            if (odinDevice == nullptr) {
+                res->success = false;
+                res->rc = -100;
+                return;
+            }
+            int value = req->value;
+            if (value == 1) {
+                if (g_map_transfer_in_progress.load()) {
+                    res->rc = -2;
+                    res->success = false;
+                    RCLCPP_WARN(rclcpp::get_logger("service"),
+                                "Map transfer already in progress, ignoring save_map=1 request");
+                    return;
+                }
+                auto now = std::chrono::system_clock::now();
+                std::time_t t = std::chrono::system_clock::to_time_t(now);
+                std::tm tm{};
+                #ifdef _WIN32
+                    localtime_s(&tm, &t);
+                #else
+                    localtime_r(&t, &tm);
+                #endif
+                char map_save_time[32];
+                std::strftime(map_save_time, sizeof(map_save_time), "%Y%m%d_%H%M%S", &tm);
+                std::string map_dir = g_mapping_result_dest_dir != "" ? g_mapping_result_dest_dir : map_root_dir_.string();
+                std::string map_name = g_mapping_result_file_name != "" ? g_mapping_result_file_name : "map_" + std::string(map_save_time) + ".bin";
+                RCLCPP_INFO(rclcpp::get_logger("service"),
+                            "Map save triggered, will transfer to [%s/%s]", map_dir.c_str(), map_name.c_str());
+                g_map_transfer_in_progress.store(true);
+                std::thread([map_dir, map_name]() {
+                    int ret = lidar_save_map(odinDevice, map_dir.c_str(), map_name.c_str(), 0);
+                    g_map_transfer_in_progress.store(false);
+                    if (ret == 0) {
+                        RCLCPP_INFO(rclcpp::get_logger("map_transfer"), "Map transfer completed: %s/%s", map_dir.c_str(), map_name.c_str());
+                    } else if (ret == -2) {
+                        RCLCPP_WARN(rclcpp::get_logger("map_transfer"), "Map transfer skipped: device is busy with another transfer");
+                    } else {
+                        RCLCPP_WARN(rclcpp::get_logger("map_transfer"), "Map transfer failed, error code: %d", ret);
+                    }
+                }).detach();
+                res->rc = 0;
+                res->success = true;
+            } else {
+                int rc = lidar_set_custom_parameter(odinDevice, "save_map", &value, sizeof(int));
+                res->rc = rc;
+                res->success = (rc == 0);
+            }
+        });
+
+    auto srv_reset_algo = node->create_service<odin_ros_driver::srv::ResetAlgo>(
+        "/odin1/reset_algo",
+        [](const std::shared_ptr<odin_ros_driver::srv::ResetAlgo::Request>  req,
+                 std::shared_ptr<odin_ros_driver::srv::ResetAlgo::Response> res) {
+            if (odinDevice == nullptr) {
+                res->success = false;
+                res->rc = -100;
+                return;
+            }
+            int value = req->value;
+            int rc = lidar_set_custom_parameter(odinDevice, "algo_reset", &value, sizeof(int));
+            res->rc = rc;
+            res->success = (rc == 0);
+        });
+
     RCLCPP_INFO(node->get_logger(),
-        "AE/AWB debug services ready: "
-        "/odin1/get_ae /odin1/get_awb /odin1/set_ae /odin1/set_awb");
+        "Services ready: "
+        "/odin1/get_ae /odin1/get_awb /odin1/set_ae /odin1/set_awb; "
+        "/odin1/get_device_logs /odin1/save_map /odin1/reset_algo");
 #else
     ros::init(argc, argv, "lydros_node");
     ros::NodeHandle nh;
@@ -2293,8 +2382,104 @@ int main(int argc, char *argv[])
                 return true;
             }));
 
-    ROS_INFO("AE/AWB debug services ready: "
-             "/odin1/get_ae /odin1/get_awb /odin1/set_ae /odin1/set_awb");
+    ros::ServiceServer srv_get_device_logs = nh.advertiseService<
+        odin_ros_driver::GetDeviceLogs::Request,
+        odin_ros_driver::GetDeviceLogs::Response>(
+        "/odin1/get_device_logs",
+        boost::function<bool(odin_ros_driver::GetDeviceLogs::Request&,
+                             odin_ros_driver::GetDeviceLogs::Response&)>(
+            [](odin_ros_driver::GetDeviceLogs::Request  &req,
+               odin_ros_driver::GetDeviceLogs::Response &res) -> bool {
+                if (odinDevice == nullptr) {
+                    res.success = false;
+                    res.rc = -100;
+                    return true;
+                }
+                int rc = lidar_get_logs(odinDevice, req.dest_dir.c_str());
+                res.rc      = rc;
+                res.success = (rc == 0);
+                return true;
+            }));
+
+    ros::ServiceServer srv_save_map = nh.advertiseService<
+        odin_ros_driver::SaveMap::Request,
+        odin_ros_driver::SaveMap::Response>(
+        "/odin1/save_map",
+        boost::function<bool(odin_ros_driver::SaveMap::Request&,
+                             odin_ros_driver::SaveMap::Response&)>(
+            [](odin_ros_driver::SaveMap::Request  &req,
+               odin_ros_driver::SaveMap::Response &res) -> bool {
+                if (odinDevice == nullptr) {
+                    res.success = false;
+                    res.rc = -100;
+                    return true;
+                }
+                int value = req.value;
+                if (value == 1) {
+                    if (g_map_transfer_in_progress.load()) {
+                        res.rc = -2;
+                        res.success = false;
+                        ROS_WARN("Map transfer already in progress, ignoring save_map=1 request");
+                        return true;
+                    }
+                    auto now = std::chrono::system_clock::now();
+                    std::time_t t = std::chrono::system_clock::to_time_t(now);
+                    std::tm tm{};
+                    #ifdef _WIN32
+                        localtime_s(&tm, &t);
+                    #else
+                        localtime_r(&t, &tm);
+                    #endif
+                    char map_save_time[32];
+                    std::strftime(map_save_time, sizeof(map_save_time), "%Y%m%d_%H%M%S", &tm);
+                    std::string map_dir = g_mapping_result_dest_dir != "" ? g_mapping_result_dest_dir : map_root_dir_.string();
+                    std::string map_name = g_mapping_result_file_name != "" ? g_mapping_result_file_name : "map_" + std::string(map_save_time) + ".bin";
+                    ROS_INFO("Map save triggered, will transfer to [%s/%s]", map_dir.c_str(), map_name.c_str());
+                    g_map_transfer_in_progress.store(true);
+                    std::thread([map_dir, map_name]() {
+                        int ret = lidar_save_map(odinDevice, map_dir.c_str(), map_name.c_str(), 0);
+                        g_map_transfer_in_progress.store(false);
+                        if (ret == 0) {
+                            ROS_INFO("Map transfer completed: %s/%s", map_dir.c_str(), map_name.c_str());
+                        } else if (ret == -2) {
+                            ROS_WARN("Map transfer skipped: device is busy with another transfer");
+                        } else {
+                            ROS_WARN("Map transfer failed, error code: %d", ret);
+                        }
+                    }).detach();
+                    res.rc = 0;
+                    res.success = true;
+                } else {
+                    int rc = lidar_set_custom_parameter(odinDevice, "save_map", &value, sizeof(int));
+                    res.rc = rc;
+                    res.success = (rc == 0);
+                }
+                return true;
+            }));
+
+    ros::ServiceServer srv_reset_algo = nh.advertiseService<
+        odin_ros_driver::ResetAlgo::Request,
+        odin_ros_driver::ResetAlgo::Response>(
+        "/odin1/reset_algo",
+        boost::function<bool(odin_ros_driver::ResetAlgo::Request&,
+                             odin_ros_driver::ResetAlgo::Response&)>(
+            [](odin_ros_driver::ResetAlgo::Request  &req,
+               odin_ros_driver::ResetAlgo::Response &res) -> bool {
+                if (odinDevice == nullptr) {
+                    res.success = false;
+                    res.rc = -100;
+                    return true;
+                }
+                int value = req.value;
+                int rc = lidar_set_custom_parameter(odinDevice, "algo_reset", &value, sizeof(int));
+                res.rc = rc;
+                res.success = (rc == 0);
+                return true;
+            }));
+
+    ROS_INFO("Services ready: "
+             "/odin1/get_ae /odin1/get_awb /odin1/set_ae /odin1/set_awb; "
+             "/odin1/get_device_logs /odin1/save_map /odin1/reset_algo");
 #endif
 
     // Register signal handlers for Ctrl+C

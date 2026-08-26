@@ -1,0 +1,9 @@
+# Retrieve device logs from the Odin sensor.
+#
+# Request: destination directory to save the log archive.
+# Response: success flag and raw return code.
+
+string dest_dir
+---
+bool success            # true if rc == 0
+int32 rc                # 0=ok, -1=invalid args, -2=transfer in progress, -3=timeout/stall

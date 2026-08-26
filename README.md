@@ -508,6 +508,16 @@ rossrv show odin_ros_driver/SetAe
   the upper limit 0.033 s is already at the frame boundary.
   最大可用 `exposure_time` 受帧周期 `1/fps` 限制。在 `dtof_fps = 290`（29 Hz、周期 ~34 ms）下，上限 0.033 s 已经贴到帧边界。
 
+## 4.7 Runtime Device Control / 运行时设备控制
+
+In addition to the AE/AWB services above, the driver exposes several runtime ROS services and supports the `set_param.sh` command-file interface for operations such as saving maps, resetting the algorithm, and retrieving device logs.
+
+除上述 AE/AWB 服务外，driver 还暴露了若干运行时 ROS Service，并支持 `set_param.sh` 命令文件接口，用于保存地图、复位算法、拉取设备日志等操作。
+
+See [docs/runtime_service_operations.md](docs/runtime_service_operations.md) for the full list of services, `set_param.sh` usage, request/response fields and examples.
+
+完整服务列表、`set_param.sh` 用法、请求/响应字段及调用示例见 [docs/runtime_service_operations.md](docs/runtime_service_operations.md)。
+
 ## 5. FAQ
 ### 5.1 Segmentation fault upon re-launching host SDK
 **Error Message**  

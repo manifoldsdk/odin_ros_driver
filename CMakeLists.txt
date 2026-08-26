@@ -155,6 +155,9 @@ if(ROS_VERSION STREQUAL "ROS1")
         GetAwb.srv
         SetAe.srv
         SetAwb.srv
+        GetDeviceLogs.srv
+        SaveMap.srv
+        ResetAlgo.srv
     )
     generate_messages(
         DEPENDENCIES
@@ -278,6 +281,9 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         "srv/GetAwb.srv"
         "srv/SetAe.srv"
         "srv/SetAwb.srv"
+        "srv/GetDeviceLogs.srv"
+        "srv/SaveMap.srv"
+        "srv/ResetAlgo.srv"
     )
 
     # Create executable

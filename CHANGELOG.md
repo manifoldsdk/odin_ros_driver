@@ -2,6 +2,7 @@
 1. Add RGB DTOF filter
 2. Fix USB disconnect deadlock issue
 3. Add RGB parameter configuration
+4. Add save_map, reset_algo, get_device_logs service
 
 0.14.1 20260809
 1. Fixed the SDK's USB memory leak issue
