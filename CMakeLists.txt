@@ -99,6 +99,20 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Set optimization flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2")
 
+# Symbolization support for the SDK crash handler.
+# -g keeps DWARF info so addr2line can report file/line, the frame-pointer and
+# unwind-table flags keep the stack walkable, and CMAKE_ENABLE_EXPORTS adds
+# -rdynamic so symbols pulled in from the static SDK archive land in .dynsym
+# and become visible to dladdr()/backtrace_symbols() at runtime.
+option(ODIN_ENABLE_BACKTRACE "Keep symbols and frame pointers for crash backtraces" ON)
+if(ODIN_ENABLE_BACKTRACE)
+    set(BACKTRACE_FLAGS "-g -fno-omit-frame-pointer -funwind-tables -fasynchronous-unwind-tables")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${BACKTRACE_FLAGS}")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${BACKTRACE_FLAGS}")
+    set(CMAKE_ENABLE_EXPORTS ON)
+    message(STATUS "Backtrace symbols enabled (-g, frame pointers, -rdynamic)")
+endif()
+
 # Find common dependencies
 find_package(PkgConfig REQUIRED)
 find_package(OpenCV REQUIRED)
