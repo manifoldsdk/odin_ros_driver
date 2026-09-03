@@ -1,3 +1,6 @@
+0.14.3 20260903
+1.Fix crash problem
+
 0.14.2 20260825
 1. Add RGB DTOF filter
 2. Fix USB disconnect deadlock issue

@@ -66,7 +66,7 @@ limitations under the License.
     #include "odin_ros_driver/SaveMap.h"
     #include "odin_ros_driver/ResetAlgo.h"
 #endif
-#define ros_driver_version "0.14.0"
+#define ros_driver_version "0.14.3"
 #define required_firmware_version_major 0
 #define required_firmware_version_minor 13
 #define required_firmware_version_patch 0
