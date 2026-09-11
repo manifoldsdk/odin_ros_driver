@@ -16,3 +16,28 @@
   reliability: reliable
   history: keep_last
   depth: 4000
+
+/odin1/cloud_raw:
+  reliability: reliable
+  history: keep_last
+  depth: 300
+
+/odin1/cloud_slam:
+  reliability: reliable
+  history: keep_last
+  depth: 300
+
+/odin1/odometry:
+  reliability: reliable
+  history: keep_last
+  depth: 300
+
+/odin1/image/compressed:
+  reliability: reliable
+  history: keep_last
+  depth: 300
+
+/odin1/image/:
+  reliability: reliable
+  history: keep_last
+  depth: 300
