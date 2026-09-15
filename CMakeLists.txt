@@ -132,7 +132,7 @@ set(COMMON_LIBS
 # ===== ROS1 Configuration =====
 if(ROS_VERSION STREQUAL "ROS1")
     message(STATUS "Configuring for ROS1 build")
-    
+
     find_package(catkin REQUIRED COMPONENTS
         roscpp
         std_msgs
@@ -297,6 +297,9 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         yaml-cpp
         usb-1.0
     )
+    target_include_directories(host_sdk_sample PUBLIC
+        $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+    )
 
     # Link the generated AE/AWB srv typesupport into host_sdk_sample so it
     # can host the 4 debug services.
@@ -321,6 +324,9 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     )
     
     add_library(pointcloud_depth_converter_ros2 src/pointcloud_depth_converter.cpp)
+    target_include_directories(pointcloud_depth_converter_ros2 PUBLIC
+        $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+    )
     target_link_libraries(pointcloud_depth_converter_ros2 PUBLIC
         ${OpenCV_LIBS}
         ${PCL_LIBRARIES}
@@ -333,6 +339,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         ${PCL_LIBRARIES}
     )
     target_include_directories(depth_image_ros2_node_lib PUBLIC
+        $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
         ${pcl_conversions_INCLUDE_DIRS}
     )
     target_link_libraries(depth_image_ros2_node_lib PUBLIC
@@ -354,6 +361,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     )
     
     target_include_directories(pcd2depth_ros2_node PUBLIC
+        $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
         ${pcl_conversions_INCLUDE_DIRS}
     )
     target_link_libraries(pcd2depth_ros2_node PUBLIC
@@ -368,6 +376,9 @@ elseif(ROS_VERSION STREQUAL "ROS2")
 
     add_library(cloud_reprojector_ros2 src/cloud_reprojector.cpp)
     target_compile_definitions(cloud_reprojector_ros2 PRIVATE ROS2)
+    target_include_directories(cloud_reprojector_ros2 PUBLIC
+        $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+    )
     target_link_libraries(cloud_reprojector_ros2 PUBLIC
         ${OpenCV_LIBS}
         ${PCL_LIBRARIES}
@@ -382,6 +393,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         yaml-cpp
     )
     target_include_directories(cloud_reprojection_ros2_node PUBLIC
+        $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
         ${pcl_conversions_INCLUDE_DIRS}
     )
     target_link_libraries(cloud_reprojection_ros2_node PUBLIC
@@ -398,6 +410,9 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     target_compile_definitions(image_overlay_node PRIVATE ROS2)
     target_link_libraries(image_overlay_node PUBLIC
         ${OpenCV_LIBS}
+    )
+    target_include_directories(image_overlay_node PUBLIC
+        $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
     )
     target_link_libraries(image_overlay_node PUBLIC
         rclcpp::rclcpp
@@ -430,7 +445,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     
     # Install headers
     install(DIRECTORY include/
-        DESTINATION include
+        DESTINATION include/${PROJECT_NAME}/
     )
     # Install launch_ROS2 directory
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/launch_ROS2")
