@@ -340,7 +340,6 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     )
     target_include_directories(depth_image_ros2_node_lib PUBLIC
         $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
-        ${pcl_conversions_INCLUDE_DIRS}
     )
     target_link_libraries(depth_image_ros2_node_lib PUBLIC
         rclcpp::rclcpp
@@ -348,9 +347,20 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         ${std_msgs_TARGETS}
         cv_bridge::cv_bridge
         image_transport::image_transport
-        ${pcl_conversions_LIBRARIES}
         message_filters::message_filters
     )
+    if(TARGET pcl_conversions::pcl_conversions)
+        target_link_libraries(depth_image_ros2_node_lib PUBLIC
+            pcl_conversions::pcl_conversions
+        )
+    else()
+        target_include_directories(depth_image_ros2_node_lib PUBLIC
+            ${pcl_conversions_INCLUDE_DIRS}
+        )
+        target_link_libraries(depth_image_ros2_node_lib PUBLIC
+            ${pcl_conversions_LIBRARIES}
+        )
+    endif()
 
     add_executable(pcd2depth_ros2_node src/pcd2depth_ros2.cpp)
     target_link_libraries(pcd2depth_ros2_node PUBLIC
@@ -362,7 +372,6 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     
     target_include_directories(pcd2depth_ros2_node PUBLIC
         $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
-        ${pcl_conversions_INCLUDE_DIRS}
     )
     target_link_libraries(pcd2depth_ros2_node PUBLIC
         rclcpp::rclcpp
@@ -370,9 +379,21 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         ${std_msgs_TARGETS}
         cv_bridge::cv_bridge
         image_transport::image_transport
-        ${pcl_conversions_LIBRARIES}
         message_filters::message_filters
     )
+    if(TARGET pcl_conversions::pcl_conversions)
+        target_link_libraries(pcd2depth_ros2_node PUBLIC
+            pcl_conversions::pcl_conversions
+        )
+    else()
+        target_include_directories(pcd2depth_ros2_node PUBLIC
+            ${pcl_conversions_INCLUDE_DIRS}
+        )
+        target_link_libraries(pcd2depth_ros2_node PUBLIC
+            ${pcl_conversions_LIBRARIES}
+        )
+    endif()
+
 
     add_library(cloud_reprojector_ros2 src/cloud_reprojector.cpp)
     target_compile_definitions(cloud_reprojector_ros2 PRIVATE ROS2)
@@ -394,7 +415,6 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     )
     target_include_directories(cloud_reprojection_ros2_node PUBLIC
         $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
-        ${pcl_conversions_INCLUDE_DIRS}
     )
     target_link_libraries(cloud_reprojection_ros2_node PUBLIC
         rclcpp::rclcpp
@@ -402,9 +422,20 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         ${nav_msgs_TARGETS}
         cv_bridge::cv_bridge
         image_transport::image_transport
-        ${pcl_conversions_LIBRARIES}
         message_filters::message_filters
     )
+    if(TARGET pcl_conversions::pcl_conversions)
+        target_link_libraries(cloud_reprojection_ros2_node PUBLIC
+            pcl_conversions::pcl_conversions
+        )
+    else()
+        target_include_directories(cloud_reprojection_ros2_node PUBLIC
+            ${pcl_conversions_INCLUDE_DIRS}
+        )
+        target_link_libraries(cloud_reprojection_ros2_node PUBLIC
+            ${pcl_conversions_LIBRARIES}
+        )
+    endif()
 
     add_executable(image_overlay_node src/image_overlay_node.cpp)
     target_compile_definitions(image_overlay_node PRIVATE ROS2)
