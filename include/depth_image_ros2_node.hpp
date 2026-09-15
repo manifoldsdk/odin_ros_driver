@@ -36,9 +36,23 @@ limitations under the License.
 #endif
 #include <image_transport/image_transport.hpp>
 
-#include <message_filters/subscriber.h>
-#include <message_filters/time_synchronizer.h>
-#include <message_filters/sync_policies/approximate_time.h>
+// ROS2 jazzy+ provides .hpp files; ROS2 lyrical removes the legacy .h.
+// Prefer .hpp when available, fall back to .h for older ROS distros (e.g. foxy/galactic).
+#if defined(__has_include)
+#  if __has_include(<message_filters/subscriber.hpp>)
+#    include <message_filters/subscriber.hpp>
+#    include <message_filters/time_synchronizer.hpp>
+#    include <message_filters/sync_policies/approximate_time.hpp>
+#  else
+#    include <message_filters/subscriber.h>
+#    include <message_filters/time_synchronizer.h>
+#    include <message_filters/sync_policies/approximate_time.h>
+#  endif
+#else
+#  include <message_filters/subscriber.h>
+#  include <message_filters/time_synchronizer.h>
+#  include <message_filters/sync_policies/approximate_time.h>
+#endif
 
 #include <Eigen/Dense>
 
