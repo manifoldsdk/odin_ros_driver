@@ -1,33 +1,16 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.10.2)
 project(odin_ros_driver)
 
+find_package(ament_cmake QUIET)
+#catkin_lint: ignore_once missing_required
+find_package(catkin QUIET)
 
-if(DEFINED BUILD_SYSTEM)
-    set(ROS_VERSION ${BUILD_SYSTEM})
-    message(STATUS "ROS_VERSION: ${ROS_VERSION}")
-elseif(DEFINED ENV{ROS_DISTRO})
-    if("$ENV{ROS_DISTRO}" MATCHES "foxy|galactic|humble|iron|rolling")
-        set(ROS_VERSION "ROS2")
-    else()
-        set(ROS_VERSION "ROS1")
-    endif()
-elseif(DEFINED ENV{ROS_VERSION})
-    if("$ENV{ROS_VERSION}" EQUAL "2")
-        set(ROS_VERSION "ROS2")
-    else()
-        set(ROS_VERSION "ROS1")
-    endif()
+if(catkin_FOUND)
+    set(ROS_VERSION "ROS1")
+elseif(ament_cmake_FOUND)
+    set(ROS_VERSION "ROS2")
 else()
-    # Attempt automatic detection
-    if(COMMAND catkin_package)
-        set(ROS_VERSION "ROS1")
-    elseif(COMMAND ament_package)
-        set(ROS_VERSION "ROS2")
-    else()
-        # Default to ROS2
-        set(ROS_VERSION "ROS2")
-        message(WARNING "Unable to determine ROS version, defaulting to ROS2")
-    endif()
+    message(FATAL_ERROR "Build failed because neither catkin nor ament found.")
 endif()
 
 # Add compile definitions after detecting ROS version
@@ -149,7 +132,7 @@ set(COMMON_LIBS
 # ===== ROS1 Configuration =====
 if(ROS_VERSION STREQUAL "ROS1")
     message(STATUS "Configuring for ROS1 build")
-    
+
     find_package(catkin REQUIRED COMPONENTS
         roscpp
         std_msgs
@@ -309,111 +292,165 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         )
     
     # Link libraries
-    target_link_libraries(host_sdk_sample
+    target_link_libraries(host_sdk_sample PUBLIC
         ${COMMON_LIBS}
         yaml-cpp
         usb-1.0
+    )
+    target_include_directories(host_sdk_sample PUBLIC
+        $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
     )
 
     # Link the generated AE/AWB srv typesupport into host_sdk_sample so it
     # can host the 4 debug services.
     rosidl_get_typesupport_target(cpp_typesupport_target
         ${PROJECT_NAME} "rosidl_typesupport_cpp")
-    target_link_libraries(host_sdk_sample "${cpp_typesupport_target}")
+    target_link_libraries(host_sdk_sample PUBLIC "${cpp_typesupport_target}")
 
     # Add ROS2 dependencies
-    ament_target_dependencies(host_sdk_sample
-        rclcpp 
-        std_msgs 
-        sensor_msgs 
-        nav_msgs 
-        visualization_msgs
-        cv_bridge
-        image_transport
-        tf2
-        tf2_ros
-        geometry_msgs
-        tf2_geometry_msgs
-        ament_index_cpp
+    target_link_libraries(host_sdk_sample PUBLIC
+        rclcpp::rclcpp
+        ${std_msgs_TARGETS}
+        ${sensor_msgs_TARGETS}
+        ${nav_msgs_TARGETS}
+        ${visualization_msgs_TARGETS}
+        cv_bridge::cv_bridge
+        image_transport::image_transport
+        tf2::tf2
+        tf2_ros::tf2_ros
+        ${geometry_msgs_TARGETS}
+        tf2_geometry_msgs::tf2_geometry_msgs
+        ament_index_cpp::ament_index_cpp
     )
     
     add_library(pointcloud_depth_converter_ros2 src/pointcloud_depth_converter.cpp)
-    target_link_libraries(pointcloud_depth_converter_ros2
+    target_include_directories(pointcloud_depth_converter_ros2 PUBLIC
+        $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+    )
+    target_link_libraries(pointcloud_depth_converter_ros2 PUBLIC
         ${OpenCV_LIBS}
         ${PCL_LIBRARIES}
     )
     
     add_library(depth_image_ros2_node_lib src/depth_image_ros2_node.cpp)
-    target_link_libraries(depth_image_ros2_node_lib
+    target_link_libraries(depth_image_ros2_node_lib PUBLIC
         pointcloud_depth_converter_ros2
         ${OpenCV_LIBS}
         ${PCL_LIBRARIES}
     )
-    
-    ament_target_dependencies(depth_image_ros2_node_lib
-        rclcpp
-        sensor_msgs
-        std_msgs
-        cv_bridge
-        image_transport
-        pcl_conversions
-        message_filters
+    target_include_directories(depth_image_ros2_node_lib PUBLIC
+        $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
     )
+    target_link_libraries(depth_image_ros2_node_lib PUBLIC
+        rclcpp::rclcpp
+        ${sensor_msgs_TARGETS}
+        ${std_msgs_TARGETS}
+        cv_bridge::cv_bridge
+        image_transport::image_transport
+        message_filters::message_filters
+    )
+    if(TARGET pcl_conversions::pcl_conversions)
+        target_link_libraries(depth_image_ros2_node_lib PUBLIC
+            pcl_conversions::pcl_conversions
+        )
+    else()
+        target_include_directories(depth_image_ros2_node_lib PUBLIC
+            ${pcl_conversions_INCLUDE_DIRS}
+        )
+        target_link_libraries(depth_image_ros2_node_lib PUBLIC
+            ${pcl_conversions_LIBRARIES}
+        )
+    endif()
 
     add_executable(pcd2depth_ros2_node src/pcd2depth_ros2.cpp)
-    target_link_libraries(pcd2depth_ros2_node
+    target_link_libraries(pcd2depth_ros2_node PUBLIC
         depth_image_ros2_node_lib
         ${OpenCV_LIBS}
         ${PCL_LIBRARIES}
         yaml-cpp
     )
     
-    ament_target_dependencies(pcd2depth_ros2_node
-        rclcpp
-        sensor_msgs
-        std_msgs
-        cv_bridge
-        image_transport
-        pcl_conversions
-        message_filters
+    target_include_directories(pcd2depth_ros2_node PUBLIC
+        $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
     )
+    target_link_libraries(pcd2depth_ros2_node PUBLIC
+        rclcpp::rclcpp
+        ${sensor_msgs_TARGETS}
+        ${std_msgs_TARGETS}
+        cv_bridge::cv_bridge
+        image_transport::image_transport
+        message_filters::message_filters
+    )
+    if(TARGET pcl_conversions::pcl_conversions)
+        target_link_libraries(pcd2depth_ros2_node PUBLIC
+            pcl_conversions::pcl_conversions
+        )
+    else()
+        target_include_directories(pcd2depth_ros2_node PUBLIC
+            ${pcl_conversions_INCLUDE_DIRS}
+        )
+        target_link_libraries(pcd2depth_ros2_node PUBLIC
+            ${pcl_conversions_LIBRARIES}
+        )
+    endif()
+
 
     add_library(cloud_reprojector_ros2 src/cloud_reprojector.cpp)
     target_compile_definitions(cloud_reprojector_ros2 PRIVATE ROS2)
-    target_link_libraries(cloud_reprojector_ros2
+    target_include_directories(cloud_reprojector_ros2 PUBLIC
+        $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+    )
+    target_link_libraries(cloud_reprojector_ros2 PUBLIC
         ${OpenCV_LIBS}
         ${PCL_LIBRARIES}
     )
 
     add_executable(cloud_reprojection_ros2_node src/cloud_reprojection_ros.cpp)
     target_compile_definitions(cloud_reprojection_ros2_node PRIVATE ROS2)
-    target_link_libraries(cloud_reprojection_ros2_node
+    target_link_libraries(cloud_reprojection_ros2_node PUBLIC
         cloud_reprojector_ros2
         ${OpenCV_LIBS}
         ${PCL_LIBRARIES}
         yaml-cpp
     )
-    ament_target_dependencies(cloud_reprojection_ros2_node
-        rclcpp
-        sensor_msgs
-        nav_msgs
-        cv_bridge
-        image_transport
-        pcl_conversions
-        message_filters
+    target_include_directories(cloud_reprojection_ros2_node PUBLIC
+        $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
     )
+    target_link_libraries(cloud_reprojection_ros2_node PUBLIC
+        rclcpp::rclcpp
+        ${sensor_msgs_TARGETS}
+        ${nav_msgs_TARGETS}
+        cv_bridge::cv_bridge
+        image_transport::image_transport
+        message_filters::message_filters
+    )
+    if(TARGET pcl_conversions::pcl_conversions)
+        target_link_libraries(cloud_reprojection_ros2_node PUBLIC
+            pcl_conversions::pcl_conversions
+        )
+    else()
+        target_include_directories(cloud_reprojection_ros2_node PUBLIC
+            ${pcl_conversions_INCLUDE_DIRS}
+        )
+        target_link_libraries(cloud_reprojection_ros2_node PUBLIC
+            ${pcl_conversions_LIBRARIES}
+        )
+    endif()
 
     add_executable(image_overlay_node src/image_overlay_node.cpp)
     target_compile_definitions(image_overlay_node PRIVATE ROS2)
-    target_link_libraries(image_overlay_node
+    target_link_libraries(image_overlay_node PUBLIC
         ${OpenCV_LIBS}
     )
-    ament_target_dependencies(image_overlay_node
-        rclcpp
-        sensor_msgs
-        cv_bridge
-        image_transport
-        message_filters
+    target_include_directories(image_overlay_node PUBLIC
+        $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+    )
+    target_link_libraries(image_overlay_node PUBLIC
+        rclcpp::rclcpp
+        ${sensor_msgs_TARGETS}
+        cv_bridge::cv_bridge
+        image_transport::image_transport
+        message_filters::message_filters
     )
 
     # Installation rules - ensure all install targets are defined before ament_package()
@@ -439,7 +476,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     
     # Install headers
     install(DIRECTORY include/
-        DESTINATION include
+        DESTINATION include/${PROJECT_NAME}/
     )
     # Install launch_ROS2 directory
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/launch_ROS2")

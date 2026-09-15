@@ -32,7 +32,9 @@ Required device firmware version: v0.14.0
 
 ● Ubuntu 18.04 is currently not supported;
 
-● Ubuntu 24.04 is not officially supported but may work with some modifications.
+● Ubuntu 24.04 is not officially supported but works
+
+● Ubuntu 26.04 is not officially supported and it was not verified
 
 ### 2.2 Dependencies
 
@@ -54,25 +56,7 @@ sudo apt update
 sudo apt-get install build-essential cmake git libgtk2.0-dev pkg-config libavcodec-dev libavformat-dev libswscale-dev
 ```
 
-#### 2.3.2 yaml-cpp
-```shell
-sudo apt update
-sudo apt install -y libyaml-cpp-dev
-```
-
-#### 2.3.3 libusb
-```shell
-sudo apt update
-sudo apt install -y libusb-1.0-0-dev
-```
-
-#### 2.3.4 opencv
-```shell
-sudo apt update
-sudo apt-get install libopencv-dev
-```
-
-#### 2.3.4 ROS install
+#### 2.3.2 ROS install
 
 For ROS Noetic installation, please refer to:
 [ROS Noetic installation instructions](https://wiki.ros.org/noetic/Installation)
@@ -98,32 +82,39 @@ Reload rules and reinsert devices
 sudo udevadm control --reload
 sudo udevadm trigger
 ```
-### 3.2 OS Requirement
+### 3.2 Clone
 ```shell
 git clone https://github.com/manifoldsdk/odin_ros_driver.git catkin_ws/src/odin_ros_driver
 ```
 Note:
 Please clone the source code into the "[ros_workspace]/src/" folder, otherwise compilation errors will occur.
 
-### 3.3 make
+### 3.3 Install dependencies
 
-#### 3.3.1 ROS1 (Noetic for example):
+```shell
+rosdep update
+rosdep install --from-paths catkin_ws/src --ignore-src -r
+```
+
+### 3.4 make
+
+#### 3.4.1 ROS1 (Noetic for example):
 
 ```shell
 source /opt/ros/noetic/setup.bash
 ./script/build_ros.sh
 ```
 
-#### 3.3.2 ROS2 (Foxy for example):
+#### 3.4.2 ROS2 (Foxy for example):
 
 ```shell
 source /opt/ros/foxy/setup.bash
 ./script/build_ros2.sh
 ```
 
-### 3.4 run:
+### 3.5 run:
 
-#### 3.4.1 ROS1 (Noetic for example):
+#### 3.5.1 ROS1 (Noetic for example):
 
 ```shell
 source [ros_workspace]/devel/setup.bash
@@ -137,7 +128,7 @@ roslaunch odin_ros_driver [launch file]
 ```shell
 roslaunch odin_ros_driver odin1_ros1.launch
 ```
-#### 3.4.2 ROS2 (Foxy for example):
+#### 3.5.2 ROS2 (Foxy for example):
 
 ```shell
 source [ros2_workspace]/install/setup.bash
@@ -154,7 +145,7 @@ ROS2 Demo Launch Instructions:
 ros2 launch odin_ros_driver odin1_ros2.launch.py
 ```
 
-### 3.5 Operation Mode:
+### 3.6 Operation Mode:
 
 The operation mode can be configured via the `custom_map_mode` parameter in config/control_command.yaml.
 
@@ -918,6 +909,8 @@ This is **not** specific to any one ROS version. The crash happens whenever `cv_
 | Humble (Ubuntu 22.04) | ROS2 | `humble` | 4.5.x |
 | Iron (Ubuntu 22.04) | ROS2 | `iron` | 4.5.x |
 | Jazzy (Ubuntu 24.04) | ROS2 | `rolling` | 4.5.x / 4.6.x |
+| Kilted (Ubuntu 24.04) | ROS2 | `rolling` | 4.5.x / 4.6.x |
+| Lyrical (Ubuntu 26.04) | ROS2 | `rolling` | 4.10.x|
 
 > If your system has only one OpenCV and it matches `cv_bridge`'s, you will **not** hit this bug — the driver builds and runs out of the box.
 > 如果系统只有一个 OpenCV 且与 `cv_bridge` 一致，你**不会**遇到此问题——驱动开箱即编即跑。
@@ -971,7 +964,7 @@ git clone -b $ROS_DISTRO https://github.com/ros-perception/vision_opencv.git
 #     先把 cv_bridge 编进工作区。
 source /opt/ros/$ROS_DISTRO/setup.bash
 cd <your_catkin_ws>
-catkin_make -DBUILD_SYSTEM=ROS1 -DCATKIN_WHITELIST_PACKAGES="cv_bridge" -j$(nproc)
+catkin_make -DCATKIN_WHITELIST_PACKAGES="cv_bridge" -j$(nproc)
 
 # (2) Then build the driver. It now finds the workspace cv_bridge and pins the
 #     driver's OpenCV to the exact same version (do NOT clean build/devel here).
@@ -983,7 +976,7 @@ cd <your_catkin_ws>/src/odin_ros_driver/script
 > **Simplest option / 最简做法**: a single full build compiles everything in the correct dependency order automatically — `catkin_make` builds `cv_bridge` (a dependency) before the driver, so you don't have to think about ordering:
 > 一条全量编译命令会**按依赖顺序自动**先编 `cv_bridge`、再编驱动，无需关心顺序：
 > ```shell
-> cd <your_catkin_ws> && catkin_make -DBUILD_SYSTEM=ROS1 -j$(nproc)
+> cd <your_catkin_ws> && catkin_make -j$(nproc)
 > ```
 
 **ROS2 (colcon):**
