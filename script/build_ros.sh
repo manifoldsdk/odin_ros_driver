@@ -66,24 +66,9 @@ build_workspace() {
         return 1
     fi
     
-    # Create temporary package.xml
-    if [ -f "${PKG_DIR}/package_ros1.xml" ]; then
-        echo "Creating temporary package.xml (using package_ros1.xml)"
-        cp "${PKG_DIR}/package_ros1.xml" "${PKG_DIR}/package.xml"
-        TEMP_PACKAGE=true
-    elif [ -f "${PKG_DIR}/package.xml" ]; then
-        echo "Using existing package.xml"
-    else
-        echo -e "${RED}Could not find package.xml in package directory${NC}"
-        return 1
-    fi
-    
-    # Set build system variable
-    export BUILD_SYSTEM=ROS1
-    
     # Switch to workspace root and build
     cd "${WORKSPACE_ROOT}" || return 1
-    catkin_make -DBUILD_SYSTEM=ROS1 -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -j$(nproc)
+    catkin_make -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -j$(nproc)
     BUILD_RESULT=$?
     
     # If build successful, source environment

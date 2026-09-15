@@ -70,7 +70,7 @@ build_workspace() {
     # Ensure ROS2 environment is loaded.
     # 1) Prefer the currently active distro (ROS_DISTRO env var) if its setup.bash exists.
     # 2) Otherwise probe a known list of ROS2 distros from newest to oldest.
-    ROS2_DISTRO_CANDIDATES=("rolling" "jazzy" "iron" "humble" "galactic" "foxy")
+    ROS2_DISTRO_CANDIDATES=("rolling" "makoa" "lyrical" "kilted" "jazzy" "iron" "humble" "galactic" "foxy")
     ROS2_SETUP_BASH=""
 
     if [ -n "${ROS_DISTRO}" ] && [ -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]; then
@@ -93,19 +93,6 @@ build_workspace() {
         return 1
     fi
     
-    # Create temporary package.xml
-    if [ -f "${PKG_DIR}/package_ros2.xml" ]; then
-        echo "Creating temporary package.xml (using package_ros2.xml)"
-        cp "${PKG_DIR}/package_ros2.xml" "${PKG_DIR}/package.xml"
-        TEMP_PACKAGE=true
-    elif [ -f "${PKG_DIR}/package.xml" ]; then
-         echo "Using existing package.xml"
-        TEMP_PACKAGE=false
-    else
-        echo -e "${RED}Could not find package.xml in package directory${NC}"
-        return 1
-    fi
-    
     # Extract package name from package.xml
     PACKAGE_NAME=$(get_package_name "${PKG_DIR}/package.xml")
     if [ -z "$PACKAGE_NAME" ]; then
@@ -113,9 +100,6 @@ build_workspace() {
         return 1
     fi
     echo "  Package name: ${PACKAGE_NAME}"
-    
-    # Set build system variable
-    export BUILD_SYSTEM=ROS2
     
     # Switch to workspace root and build
     cd "${WORKSPACE_ROOT}" || return 1
@@ -125,7 +109,6 @@ build_workspace() {
         --packages-select "${PACKAGE_NAME}" \
         --parallel-workers $(nproc) \
         --cmake-args \
-            -DBUILD_SYSTEM=ROS2 \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
     
     BUILD_RESULT=$?
