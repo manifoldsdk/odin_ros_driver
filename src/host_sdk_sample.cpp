@@ -54,6 +54,8 @@ limitations under the License.
     #include "odin_ros_driver/srv/get_device_logs.hpp"
     #include "odin_ros_driver/srv/save_map.hpp"
     #include "odin_ros_driver/srv/reset_algo.hpp"
+    #include "odin_ros_driver/srv/set_slam_mode.hpp"
+    #include "odin_ros_driver/srv/set_reloc_map.hpp"
     // GPSRAW pass-through: wire-format struct + serializer reused from the
     // standalone gps_raw_node so an external GPS topic can be forwarded to
     // the device via lidar_send_user_data.
@@ -69,6 +71,8 @@ limitations under the License.
     #include "odin_ros_driver/GetDeviceLogs.h"
     #include "odin_ros_driver/SaveMap.h"
     #include "odin_ros_driver/ResetAlgo.h"
+    #include "odin_ros_driver/SetSlamMode.h"
+    #include "odin_ros_driver/SetRelocMap.h"
 #endif
 #define ros_driver_version "0.14.4"
 #define required_firmware_version_major 0
@@ -2342,10 +2346,88 @@ int main(int argc, char *argv[])
             res->success = (rc == 0);
         });
 
+    // Runtime SLAM map_mode switch. Forwards the value as the "map_mode" custom
+    // parameter (control command 35); supporting firmware restarts SLAM
+    // asynchronously when the value changes while SLAM is running.
+    auto srv_set_slam_mode = node->create_service<odin_ros_driver::srv::SetSlamMode>(
+        "/odin1/set_slam_mode",
+        [](const std::shared_ptr<odin_ros_driver::srv::SetSlamMode::Request>  req,
+                 std::shared_ptr<odin_ros_driver::srv::SetSlamMode::Response> res) {
+            if (odinDevice == nullptr) {
+                res->success = false;
+                res->rc = -100;
+                return;
+            }
+            int mode = req->mode;
+            if (mode < 0 || mode > 2) {
+                RCLCPP_WARN(rclcpp::get_logger("service"), "set_slam_mode: invalid mode %d (expected 0/1/2)", mode);
+                res->success = false;
+                res->rc = -1;
+                return;
+            }
+            int rc = lidar_set_custom_parameter(odinDevice, "map_mode", &mode, sizeof(int));
+            if (rc == 0) {
+                g_custom_map_mode = mode;
+                // Allow the "relocalization success" message to be printed again
+                // after the SLAM restart that this mode change may trigger.
+                g_relocalization_success_msg_printed = false;
+                RCLCPP_INFO(rclcpp::get_logger("service"),
+                            "set_slam_mode: map_mode set to %d (SLAM may restart asynchronously)", mode);
+            } else {
+                RCLCPP_WARN(rclcpp::get_logger("service"), "set_slam_mode: failed, rc=%d", rc);
+            }
+            res->rc = rc;
+            res->success = (rc == 0);
+        });
+
+    // Runtime relocalization map swap. Transfers the given file to the device;
+    // supporting firmware restarts SLAM asynchronously when in reloc mode. The
+    // transfer may be long, so it runs in a background thread.
+    auto srv_set_reloc_map = node->create_service<odin_ros_driver::srv::SetRelocMap>(
+        "/odin1/set_reloc_map",
+        [](const std::shared_ptr<odin_ros_driver::srv::SetRelocMap::Request>  req,
+                 std::shared_ptr<odin_ros_driver::srv::SetRelocMap::Response> res) {
+            if (odinDevice == nullptr) {
+                res->success = false;
+                res->rc = -100;
+                return;
+            }
+            std::string map_path = req->map_path;
+            if (map_path.empty() || !std::filesystem::exists(map_path)) {
+                RCLCPP_WARN(rclcpp::get_logger("service"), "set_reloc_map: invalid or missing file [%s]", map_path.c_str());
+                res->success = false;
+                res->rc = -1;
+                return;
+            }
+            bool expected = false;
+            if (!g_map_transfer_in_progress.compare_exchange_strong(expected, true)) {
+                RCLCPP_WARN(rclcpp::get_logger("service"), "set_reloc_map: another map transfer is in progress");
+                res->success = false;
+                res->rc = -2;
+                return;
+            }
+            RCLCPP_INFO(rclcpp::get_logger("service"), "set_reloc_map: transferring [%s]", map_path.c_str());
+            std::thread([map_path]() {
+                int ret = lidar_set_relocalization_map(odinDevice, map_path.c_str());
+                g_map_transfer_in_progress.store(false);
+                if (ret == 0) {
+                    g_relocalization_map_abs_path = map_path;
+                    g_relocalization_success_msg_printed = false;
+                    RCLCPP_INFO(rclcpp::get_logger("map_transfer"),
+                                "Relocalization map swap completed: %s (SLAM may restart asynchronously)", map_path.c_str());
+                } else {
+                    RCLCPP_WARN(rclcpp::get_logger("map_transfer"), "Relocalization map swap failed, error code: %d", ret);
+                }
+            }).detach();
+            res->rc = 0;
+            res->success = true;
+        });
+
     RCLCPP_INFO(node->get_logger(),
         "Services ready: "
         "/odin1/get_ae /odin1/get_awb /odin1/set_ae /odin1/set_awb; "
-        "/odin1/get_device_logs /odin1/save_map /odin1/reset_algo");
+        "/odin1/get_device_logs /odin1/save_map /odin1/reset_algo "
+        "/odin1/set_slam_mode /odin1/set_reloc_map");
 #else
     ros::init(argc, argv, "lydros_node");
     ros::NodeHandle nh;
@@ -2550,9 +2632,91 @@ int main(int argc, char *argv[])
                 return true;
             }));
 
+    // Runtime SLAM map_mode switch (ROS1). Same semantics as the ROS2 branch:
+    // forwards the value as the "map_mode" custom parameter (control command 35).
+    ros::ServiceServer srv_set_slam_mode = nh.advertiseService<
+        odin_ros_driver::SetSlamMode::Request,
+        odin_ros_driver::SetSlamMode::Response>(
+        "/odin1/set_slam_mode",
+        boost::function<bool(odin_ros_driver::SetSlamMode::Request&,
+                             odin_ros_driver::SetSlamMode::Response&)>(
+            [](odin_ros_driver::SetSlamMode::Request  &req,
+               odin_ros_driver::SetSlamMode::Response &res) -> bool {
+                if (odinDevice == nullptr) {
+                    res.success = false;
+                    res.rc = -100;
+                    return true;
+                }
+                int mode = req.mode;
+                if (mode < 0 || mode > 2) {
+                    ROS_WARN("set_slam_mode: invalid mode %d (expected 0/1/2)", mode);
+                    res.success = false;
+                    res.rc = -1;
+                    return true;
+                }
+                int rc = lidar_set_custom_parameter(odinDevice, "map_mode", &mode, sizeof(int));
+                if (rc == 0) {
+                    g_custom_map_mode = mode;
+                    g_relocalization_success_msg_printed = false;
+                    ROS_INFO("set_slam_mode: map_mode set to %d (SLAM may restart asynchronously)", mode);
+                } else {
+                    ROS_WARN("set_slam_mode: failed, rc=%d", rc);
+                }
+                res.rc = rc;
+                res.success = (rc == 0);
+                return true;
+            }));
+
+    // Runtime relocalization map swap (ROS1). Transfer runs in a background
+    // thread because it may be long; rc only reports whether it was accepted.
+    ros::ServiceServer srv_set_reloc_map = nh.advertiseService<
+        odin_ros_driver::SetRelocMap::Request,
+        odin_ros_driver::SetRelocMap::Response>(
+        "/odin1/set_reloc_map",
+        boost::function<bool(odin_ros_driver::SetRelocMap::Request&,
+                             odin_ros_driver::SetRelocMap::Response&)>(
+            [](odin_ros_driver::SetRelocMap::Request  &req,
+               odin_ros_driver::SetRelocMap::Response &res) -> bool {
+                if (odinDevice == nullptr) {
+                    res.success = false;
+                    res.rc = -100;
+                    return true;
+                }
+                std::string map_path = req.map_path;
+                if (map_path.empty() || !std::filesystem::exists(map_path)) {
+                    ROS_WARN("set_reloc_map: invalid or missing file [%s]", map_path.c_str());
+                    res.success = false;
+                    res.rc = -1;
+                    return true;
+                }
+                bool expected = false;
+                if (!g_map_transfer_in_progress.compare_exchange_strong(expected, true)) {
+                    ROS_WARN("set_reloc_map: another map transfer is in progress");
+                    res.success = false;
+                    res.rc = -2;
+                    return true;
+                }
+                ROS_INFO("set_reloc_map: transferring [%s]", map_path.c_str());
+                std::thread([map_path]() {
+                    int ret = lidar_set_relocalization_map(odinDevice, map_path.c_str());
+                    g_map_transfer_in_progress.store(false);
+                    if (ret == 0) {
+                        g_relocalization_map_abs_path = map_path;
+                        g_relocalization_success_msg_printed = false;
+                        ROS_INFO("Relocalization map swap completed: %s (SLAM may restart asynchronously)", map_path.c_str());
+                    } else {
+                        ROS_WARN("Relocalization map swap failed, error code: %d", ret);
+                    }
+                }).detach();
+                res.rc = 0;
+                res.success = true;
+                return true;
+            }));
+
     ROS_INFO("Services ready: "
              "/odin1/get_ae /odin1/get_awb /odin1/set_ae /odin1/set_awb; "
-             "/odin1/get_device_logs /odin1/save_map /odin1/reset_algo");
+             "/odin1/get_device_logs /odin1/save_map /odin1/reset_algo "
+             "/odin1/set_slam_mode /odin1/set_reloc_map");
 #endif
 
     // Register signal handlers for Ctrl+C

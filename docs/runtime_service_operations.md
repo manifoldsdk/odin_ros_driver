@@ -139,6 +139,94 @@ ROS1:
 rosservice call /odin1/reset_algo '{value: 1}'
 ```
 
+### 2.5 Set SLAM Mode / 切换 SLAM 模式
+
+**Service / 服务**: `/odin1/set_slam_mode`  
+**Type / 类型**: `odin_ros_driver/srv/SetSlamMode`
+
+Switches the SLAM `map_mode` at runtime. The value is forwarded as the `map_mode` custom parameter (control command `SYS_CONTROL_ALGO_SETTING`). On firmware that supports it, changing `map_mode` while SLAM is running makes the device **restart SLAM asynchronously** so the new mode takes effect. The reply only confirms the value was persisted, not that the restart finished — wait for the SLAM data stream (odometry / cloud) to resume.
+
+在运行时切换 SLAM 的 `map_mode`。取值会作为 `map_mode` 自定义参数下发（控制命令 `SYS_CONTROL_ALGO_SETTING`）。在支持该特性的固件上，SLAM 运行期间改变 `map_mode` 会让设备**异步重启 SLAM** 使新模式生效。应答仅表示配置已落盘，不代表重启已完成——请等待 SLAM 数据流（里程计 / 点云）恢复。
+
+**Request / 请求**
+
+| Field | Type | Description / 说明 |
+|---|---|---|
+| `mode` | `int32` | Target `map_mode`: `0` = odom, `1` = mapping, `2` = reloc. 目标 `map_mode`：`0` 里程计，`1` 建图，`2` 重定位。 |
+
+**Response / 响应**
+
+| Field | Type | Description / 说明 |
+|---|---|---|
+| `success` | `bool` | `true` if `rc == 0`. 当 `rc == 0` 时为 true。 |
+| `rc` | `int32` | `0`=ok, `-1`=invalid mode (not 0/1/2) or SDK error, `-100`=device not connected. `0` 成功，`-1` 非法模式或 SDK 错误，`-100` 设备未连接。 |
+
+**Usage / 调用**
+
+ROS2:
+```bash
+ros2 service call /odin1/set_slam_mode odin_ros_driver/srv/SetSlamMode '{mode: 2}'
+```
+
+ROS1:
+```bash
+rosservice call /odin1/set_slam_mode '{mode: 2}'
+```
+
+### 2.6 Set Relocalization Map / 运行时换图
+
+**Service / 服务**: `/odin1/set_reloc_map`  
+**Type / 类型**: `odin_ros_driver/srv/SetRelocMap`
+
+Transfers a new relocalization map file to the device at runtime. On firmware that supports it, if the device is currently in reloc mode (`map_mode == 2`) and SLAM is running, finishing the transfer makes the device **restart SLAM asynchronously** and reload the new map. Otherwise the new map takes effect at the next SLAM start. The transfer may take a while, so it runs in a background thread: `rc`/`success` only report whether the request was **accepted**; the real transfer result is printed in the driver log.
+
+在运行时向设备传输新的重定位地图文件。在支持该特性的固件上，若设备当前处于重定位模式（`map_mode == 2`）且 SLAM 正在运行，传输完成会让设备**异步重启 SLAM** 并加载新地图；否则新地图在下次 SLAM 启动时生效。传输可能耗时，因此在后台线程执行：`rc`/`success` 仅表示请求是否被**接受**，真正的传输结果打印在 driver 日志中。
+
+**Request / 请求**
+
+| Field | Type | Description / 说明 |
+|---|---|---|
+| `map_path` | `string` | Absolute path to the relocalization map file (`.bin`). 重定位地图文件的绝对路径（`.bin`）。 |
+
+**Response / 响应**
+
+| Field | Type | Description / 说明 |
+|---|---|---|
+| `success` | `bool` | `true` if the transfer request was accepted. 传输请求被接受时为 true。 |
+| `rc` | `int32` | `0`=accepted, `-1`=invalid/missing file, `-2`=another transfer in progress, `-100`=device not connected. `0` 已受理，`-1` 文件无效或不存在，`-2` 另一次传输进行中，`-100` 设备未连接。 |
+
+**Usage / 调用**
+
+ROS2:
+```bash
+ros2 service call /odin1/set_reloc_map odin_ros_driver/srv/SetRelocMap '{map_path: "/abs/path/map_merged.bin"}'
+```
+
+ROS1:
+```bash
+rosservice call /odin1/set_reloc_map '{map_path: "/abs/path/map_merged.bin"}'
+```
+
+### 2.7 Switch to Reloc and Swap Map Together / 切重定位并同时换图
+
+To switch from mapping to relocalization **with a new map** while restarting SLAM only **once**, transfer the map first, then set the mode (the map transfer alone does not restart SLAM while `map_mode != 2`):
+
+要从建图切到重定位并**同时换新图**、且全程只重启**一次** SLAM，应**先换图、后切模式**（`map_mode != 2` 时单纯换图不会触发重启）：
+
+```bash
+# 1) Transfer the new map (no restart yet, still in mapping mode)
+#    先传新图（此时仍在建图模式，不触发重启）
+ros2 service call /odin1/set_reloc_map odin_ros_driver/srv/SetRelocMap '{map_path: "/abs/path/map_merged.bin"}'
+# wait for "Relocalization map swap completed" in the driver log
+# 等待 driver 日志出现 "Relocalization map swap completed"
+
+# 2) Switch to reloc mode (triggers the single restart, loads the new map)
+#    再切到重定位模式（触发唯一一次重启，加载新图）
+ros2 service call /odin1/set_slam_mode odin_ros_driver/srv/SetSlamMode '{mode: 2}'
+```
+
+> The reverse order (set mode first, then transfer) works but restarts SLAM **twice**. 反向顺序（先切模式、后换图）功能正确，但会重启 SLAM **两次**。
+
 ---
 
 ## 3. Return Code Convention / 返回码说明

@@ -286,6 +286,21 @@ register_keys:
 
 ## Programmatic API / 编程接口
 
+> **Runtime mode switch and map swap / 运行时切模式与换图**
+>
+> Besides configuring `custom_map_mode` / `relocalization_map_abs_path` at startup,
+> you can switch the SLAM mode and swap the relocalization map **while the driver is
+> running** through two ROS services: `/odin1/set_slam_mode` and `/odin1/set_reloc_map`.
+> On supporting firmware the device restarts SLAM asynchronously so the change takes
+> effect without relaunching the driver. See
+> [docs/runtime_service_operations.md](docs/runtime_service_operations.md) sections 2.5–2.7.
+>
+> 除了在启动时配置 `custom_map_mode` / `relocalization_map_abs_path`，还可以在 driver
+> **运行期间**通过 `/odin1/set_slam_mode` 和 `/odin1/set_reloc_map` 两个 ROS 服务切换
+> SLAM 模式并更换重定位地图。在支持该特性的固件上，设备会异步重启 SLAM 使改动生效，
+> 无需重启 driver。详见
+> [docs/runtime_service_operations.md](docs/runtime_service_operations.md) 2.5–2.7 节。
+
 ### English
 
 You can also set `init_pos` programmatically using the `lidar_set_custom_parameter` API. This is useful for:
@@ -638,5 +653,6 @@ void initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPt
 ## See Also / 参见
 
 - [README.md](README.md) - Main documentation
+- [docs/runtime_service_operations.md](docs/runtime_service_operations.md) - Runtime services (set_slam_mode / set_reloc_map) / 运行时服务
 - [config/control_command.yaml](config/control_command.yaml) - Configuration file
 

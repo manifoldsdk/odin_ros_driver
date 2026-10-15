@@ -1,0 +1,18 @@
+# Swap the relocalization map on the device at runtime.
+#
+# This transfers the given file to the device relocalization map path (file
+# transfer channel). On firmware that supports it, if the device is currently in
+# reloc mode (map_mode == 2) and SLAM is running, finishing the transfer makes
+# the device asynchronously restart SLAM and reload the new map (see
+# Host_USB_Slam_Mode_Protocol.md). If map_mode != 2 or SLAM is not running, the
+# new map simply takes effect at the next SLAM start.
+#
+# The transfer may take a while, so it runs in a background thread: success/rc
+# below only report whether the request was *accepted*. The actual transfer
+# result is logged by the driver. Only one map transfer can run at a time.
+#
+# map_path : absolute path to the relocalization map file (.bin).
+string map_path
+---
+bool success            # true if the transfer request was accepted
+int32 rc                # 0=accepted, -1=invalid/missing file, -2=another transfer in progress, -100=device not ready

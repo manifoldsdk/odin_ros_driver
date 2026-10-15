@@ -172,6 +172,8 @@ if(ROS_VERSION STREQUAL "ROS1")
         GetDeviceLogs.srv
         SaveMap.srv
         ResetAlgo.srv
+        SetSlamMode.srv
+        SetRelocMap.srv
     )
     generate_messages(
         DEPENDENCIES
@@ -309,6 +311,8 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         "srv/GetDeviceLogs.srv"
         "srv/SaveMap.srv"
         "srv/ResetAlgo.srv"
+        "srv/SetSlamMode.srv"
+        "srv/SetRelocMap.srv"
     )
 
     # Create executable

@@ -1,0 +1,20 @@
+# Switch the SLAM map_mode at runtime.
+#
+# This forwards the value as the "map_mode" custom parameter (control command
+# SYS_CONTROL_ALGO_SETTING, code 35). On firmware that supports it, changing
+# map_mode while SLAM is running makes the device asynchronously restart SLAM so
+# the new mode takes effect (see Host_USB_Slam_Mode_Protocol.md). The OK reply
+# only confirms the value was persisted, not that the restart finished; the host
+# should wait for the SLAM data stream to resume.
+#
+# mode : target map_mode.
+#        0 = odom   (odometry only)
+#        1 = mapping (SLAM mapping)
+#        2 = reloc  (relocalization, loads an existing map)
+#
+# To switch to reloc with a new map and restart SLAM only once, transfer the map
+# first via /odin1/set_reloc_map, then call this service with mode=2.
+int32 mode
+---
+bool success            # true if rc == 0
+int32 rc                # 0=ok, -1=invalid mode / SDK error, -100=device not ready
