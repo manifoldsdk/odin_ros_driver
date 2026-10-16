@@ -519,6 +519,14 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         ament_index_cpp
     )
     
+    if(BUILD_TESTING)
+        enable_testing()
+        add_executable(driver_lifecycle_test src/driver_lifecycle_test.cpp)
+        target_link_libraries(driver_lifecycle_test yaml-cpp pthread)
+        add_test(NAME driver_lifecycle COMMAND driver_lifecycle_test)
+        set_tests_properties(driver_lifecycle PROPERTIES TIMEOUT 30)
+    endif()
+
     ament_package()
     message(STATUS "Install targets added")
     

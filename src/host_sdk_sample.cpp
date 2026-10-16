@@ -15,6 +15,9 @@ limitations under the License.
 #include "yaml_parser.h"
 #include "rawCloudRender.h"
 #include "odin_calib_path.h"
+#include "driver_lifecycle.h"
+#include <functional>
+#include <shared_mutex>
 #include <filesystem> 
 #include <thread>
 #include <string>
@@ -81,7 +84,16 @@ limitations under the License.
 
 // Global variable declarations
 static device_handle odinDevice = nullptr;
-static std::atomic<bool> deviceConnected(false);
+static odin_ros_driver::DriverLifecycle deviceLifecycle;
+static std::atomic<bool>& deviceConnected = deviceLifecycle.connected;
+static std::shared_mutex publishMutex;
+static std::atomic<sig_atomic_t> signalRequested{0};
+static_assert(decltype(signalRequested)::is_always_lock_free, "Signal flag must be lock-free");
+static bool sdkInitialized = false;
+static uint64_t deviceGeneration = 0;
+static std::vector<device_handle> deviceHandles;
+static std::vector<std::unique_ptr<uint64_t>> callbackGenerations;
+static std::thread deviceTaskThread;
 static std::atomic<bool> deviceDisconnected(false);  // Device disconnection flag
 static std::mutex device_mutex;                      // Device operation mutex lock
 static std::atomic<bool> g_connection_timeout(false);
@@ -173,8 +185,8 @@ int g_rgb_height = 1296;  // Image height in pixels
 int g_rgb_fps = 100;      // Frame rate * 10 (300 = 30fps)
 
 std::filesystem::path log_root_dir_;
-int g_custom_map_mode = 0;
-bool g_relocalization_success_msg_printed = false;
+std::atomic<int> g_custom_map_mode{0};
+std::atomic<bool> g_relocalization_success_msg_printed{false};
 
 std::string g_relocalization_map_abs_path = "";
 std::string g_mapping_result_dest_dir = "";
@@ -337,11 +349,20 @@ static bool convert_calib_to_cam_in_ex(const std::string& calib_path, const std:
 
 // Signal handler for Ctrl+C
 static void signal_handler(int signum) {
-    if (signum == SIGINT || signum == SIGTERM) {
+    signalRequested = signum;
+}
+
+static void ShutdownDriver() {
+    static bool shutdownComplete = false;
+    if (shutdownComplete) return;
+    shutdownComplete = true;
+    const bool wasConnected = deviceConnected.load();
+    deviceLifecycle.Stop();
+    {
         #ifdef ROS2
-            RCLCPP_INFO(rclcpp::get_logger("signal_handler"), "Received signal %d, shutting down...", signum);
+            RCLCPP_INFO(rclcpp::get_logger("signal_handler"), "Shutting down driver (signal=%d)...", static_cast<int>(signalRequested));
         #else
-            ROS_INFO("Received signal %d, shutting down...", signum);
+            ROS_INFO("Shutting down driver (signal=%d)...", static_cast<int>(signalRequested));
         #endif
 
         g_shutdown_requested = true;
@@ -361,6 +382,8 @@ static void signal_handler(int signum) {
         if (g_param_monitor_thread.joinable()) {
             g_param_monitor_thread.join();
         }
+
+        if (deviceTaskThread.joinable()) deviceTaskThread.join();
 
         // Close device
         if (odinDevice) {
@@ -386,7 +409,7 @@ static void signal_handler(int signum) {
                 ROS_INFO("Closing device...");
             #endif
 
-            if (lidar_stop_stream(odinDevice, LIDAR_MODE_SLAM))
+            if (wasConnected && lidar_stop_stream(odinDevice, LIDAR_MODE_SLAM))
             {
                 #ifdef ROS2
                     RCLCPP_INFO(rclcpp::get_logger("device_cb"), "lidar_stop_stream failed");
@@ -394,7 +417,7 @@ static void signal_handler(int signum) {
                     ROS_INFO("lidar_stop_stream failed");
                 #endif
             }
-            odinDevice = nullptr;
+            lidar_unregister_stream_callback(odinDevice);
         }
 
         // Deinitialize lidar system
@@ -403,7 +426,15 @@ static void signal_handler(int signum) {
         #else
             ROS_INFO("Deinitializing lidar system...");
         #endif
-        lidar_system_deinit();
+        if (sdkInitialized) {
+            lidar_system_deinit();
+            for (auto handle : deviceHandles) lidar_destory_device(handle);
+            sdkInitialized = false;
+        }
+        odinDevice = nullptr;
+        deviceHandles.clear();
+        callbackGenerations.clear();
+        g_renderer.reset();
 
         // Close CSV file
         if (dev_status_csv_file) {
@@ -436,8 +467,26 @@ static void signal_handler(int signum) {
             ros::shutdown();
         #endif
 
-        exit(0);
     }
+}
+
+static void StartDeviceTask(std::function<void(device_handle)> task) {
+    const auto handle = odinDevice;
+    const auto generation = deviceGeneration;
+    if (deviceTaskThread.joinable()) deviceTaskThread.join();
+    deviceTaskThread = std::thread([task = std::move(task), handle, generation]() {
+        std::lock_guard<std::mutex> lock(device_mutex);
+        try {
+            if (!g_shutdown_requested && deviceLifecycle.IsCurrent(generation) && deviceConnected) task(handle);
+        } catch (const std::exception& error) {
+            #ifdef ROS2
+                RCLCPP_ERROR(rclcpp::get_logger("device_task"), "Device task failed: %s", error.what());
+            #else
+                ROS_ERROR("Device task failed: %s", error.what());
+            #endif
+        }
+        g_map_transfer_in_progress = false;
+    });
 }
 
 // Custom parameter monitoring function
@@ -445,7 +494,7 @@ static void signal_handler(int signum) {
 // so this monitor no longer needs to detect state changes. It's kept for potential future use
 // or for monitoring other parameters.
 static void custom_parameter_monitor() {
-    while (g_param_monitor_running && deviceConnected) {
+    while (g_param_monitor_running && !g_shutdown_requested) {
         // Currently no active monitoring needed since map transfer is triggered directly
         // in process_command_file() when save_map=1 is set.
         // This loop is kept for potential future parameter monitoring needs.
@@ -460,6 +509,8 @@ static void process_command_file() {
     if (!std::filesystem::exists(g_command_file_path)) {
         return;
     }
+    std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+    if (!deviceLock.owns_lock()) return;
     
     std::ifstream file(g_command_file_path);
     if (!file.is_open()) {
@@ -554,11 +605,10 @@ static void process_command_file() {
                         // All the orchestration (trigger -> poll -> fetch) is now handled inside
                         // the SDK's lidar_save_map() one-shot API, so this side just blocks on it
                         // and reports the final outcome.
-                        std::thread([map_dir, map_name]() {
+                        StartDeviceTask([map_dir, map_name](device_handle handle) {
                             // 0 = use SDK default generation timeout (120s).
-                            int ret = lidar_save_map(odinDevice, map_dir.c_str(), map_name.c_str(), 0);
+                            int ret = lidar_save_map(handle, map_dir.c_str(), map_name.c_str(), 0);
                             // Always clear the in-progress flag when this thread exits
-                            g_map_transfer_in_progress.store(false);
                             
                             if (ret == 0) {
                                 #ifdef ROS2
@@ -579,7 +629,7 @@ static void process_command_file() {
                                     ROS_WARN("Map transfer failed, error code: %d", ret);
                                 #endif
                             }
-                        }).detach();
+                        });
                     }
                     return;  // save_map=1 handled, skip the generic set path below
                 }
@@ -901,6 +951,8 @@ std::string get_package_path(const std::string& package_name) {
 
 // Clear all queues
 void clear_all_queues() {
+    std::unique_lock<std::shared_mutex> publishLock(publishMutex);
+    if (g_ros_object) g_ros_object->ClearPendingData();
     // Reset state variables
     g_latest_bgr.reset();
     g_latest_rgb_timestamp = 0;
@@ -913,6 +965,28 @@ void clear_all_queues() {
             g_imu_queue.pop();
         }
     }
+}
+
+static void StopDeviceWorkers() {
+    deviceConnected = false;
+    stop_imu_thread();
+    g_param_monitor_running = false;
+    if (g_param_monitor_thread.joinable()) g_param_monitor_thread.join();
+    clear_all_queues();
+    if (dev_status_csv_file) {
+        std::fflush(dev_status_csv_file);
+        fclose(dev_status_csv_file);
+        dev_status_csv_file = nullptr;
+    }
+}
+
+static void ReportPublishFailure(uint32_t dataType, const std::exception& error) {
+    #ifdef ROS2
+        RCLCPP_ERROR_THROTTLE(rclcpp::get_logger("data_callback"), *g_ros_object->node_->get_clock(), 2000,
+                             "Dropping frame after processing/publish failure (type=0x%x): %s", dataType, error.what());
+    #else
+        ROS_ERROR_THROTTLE(2.0, "Dropping frame after processing/publish failure (type=0x%x): %s", dataType, error.what());
+    #endif
 }
 
 // IMU dedicated processing thread routine
@@ -953,8 +1027,15 @@ static void imu_thread_routine()
             lock.unlock();
             
             // Publish IMU data
-            if (g_ros_object && g_sendimu) {
-                g_ros_object->publishImu(&imu_data);
+            {
+                std::shared_lock<std::shared_mutex> publishLock(publishMutex);
+                if (deviceConnected && !signalRequested && !g_shutdown_requested && g_ros_object && g_sendimu) {
+                    try {
+                        g_ros_object->publishImu(&imu_data);
+                    } catch (const std::exception& error) {
+                        ReportPublishFailure(LIDAR_DT_RAW_IMU, error);
+                    }
+                }
             }
             
             lock.lock();
@@ -990,8 +1071,7 @@ static void start_imu_thread()
 static void stop_imu_thread()
 {
     if (g_imu_thread_running) {
-        g_imu_thread_running = false;
-        g_imu_queue_cv.notify_all();
+        odin_ros_driver::StopWorker(g_imu_thread_running, g_imu_queue_mutex, g_imu_queue_cv);
         if (g_imu_thread.joinable()) {
             g_imu_thread.join();
         }
@@ -1011,7 +1091,7 @@ static void stop_imu_thread()
 }
 
 // Lidar data callback
-static void lidar_data_callback(const lidar_data_t *data, void *user_data)
+static void HandleLidarData(const lidar_data_t *data, void *user_data)
 {
     // If device is not connected, ignore all data
     if (!deviceConnected) {
@@ -1023,7 +1103,7 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
         return;
     }
     
-    device_handle *dev_handle = static_cast<device_handle *>(user_data);
+    const auto* dev_handle = static_cast<const uint64_t*>(user_data);
     if(!dev_handle || !data) {
         printf("Invalid device handle or data.\n");
         return;
@@ -1309,8 +1389,30 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
     }
 }
 
-static void lidar_device_callback(const lidar_device_info_t* device, bool attach)
+static void lidar_data_callback(const lidar_data_t* data, void* userData) {
+    if (!deviceConnected || signalRequested || g_shutdown_requested) return;
+    std::shared_lock<std::shared_mutex> lock(publishMutex);
+    const auto* generation = static_cast<const uint64_t*>(userData);
+    if (!data || !generation || !g_ros_object || !deviceConnected || signalRequested
+        || g_shutdown_requested || !deviceLifecycle.IsCurrent(*generation)) return;
+    try {
+        HandleLidarData(data, userData);
+    } catch (const std::exception& error) {
+        ReportPublishFailure(data->type, error);
+    }
+}
+
+static void lidar_device_callback(const lidar_device_info_t* device, bool attach) {
+    if (!device || signalRequested || g_shutdown_requested) return;
+    deviceLifecycle.Submit(*device, attach);
+    if (!attach) deviceDisconnected = true;
+}
+
+static void HandleDeviceEvent(const odin_ros_driver::DeviceEvent& event)
 {
+    auto deviceInfo = event.deviceInfo;
+    const auto* device = &deviceInfo;
+    const bool attach = event.attach;
     int type = LIDAR_MODE_SLAM;
     // int type = LIDAR_MODE_RAW;
     static std::chrono::steady_clock::time_point software_connect_start; 
@@ -1325,31 +1427,33 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         if (!isUsb3OrHigher(TARGET_VENDOR, TARGET_PRODUCT)) {
             #ifdef ROS2
                 RCLCPP_FATAL(rclcpp::get_logger("device_cb"), 
-                            "Device connected to USB 2.0 port. This device requires USB 3.0 or higher. Exiting program.");
+                            "USB 3.0 or higher is required; waiting for a compatible connection.");
             #else
-                ROS_FATAL("Device connected to USB 2.0 port. This device requires USB 3.0 or higher. Exiting program.");
+                ROS_FATAL("USB 3.0 or higher is required; waiting for a compatible connection.");
             #endif
 
             g_usb_version_error = true;
-            system("pkill -f rviz");
-            exit(1);
             return;
         }
 
+        g_usb_version_error = false;
         software_connect_start = std::chrono::steady_clock::now();
         software_connect_timing = true;
-        
-        if (odinDevice) {
+        const bool reuseHandle = odinDevice && deviceGeneration == event.generation;
+        deviceGeneration = event.generation;
+        if (!reuseHandle) {
+            if (odinDevice) lidar_unregister_stream_callback(odinDevice);
             odinDevice = nullptr;
-        }
-        
-        if (lidar_create_device(const_cast<lidar_device_info_t*>(device), &odinDevice)) {
-            #ifdef ROS2
-                RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Create device failed");
-            #else
-                ROS_ERROR("Create device failed");
-            #endif
-            return;
+            if (lidar_create_device(const_cast<lidar_device_info_t*>(device), &odinDevice)) {
+                #ifdef ROS2
+                    RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Create device failed");
+                #else
+                    ROS_ERROR("Create device failed");
+                #endif
+                return;
+            }
+            deviceHandles.push_back(odinDevice);
+            callbackGenerations.push_back(std::make_unique<uint64_t>(event.generation));
         }
 	const std::string package_name = "odin_ros_driver";
 	std::string config_dir = "";
@@ -1417,15 +1521,14 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         if (elapsed.count() >= 60) {
             #ifdef ROS2
                 RCLCPP_FATAL(rclcpp::get_logger("device_cb"), 
-                            "Software connection timed out after 60 seconds. Exiting program.");
+                            "Software connection timed out after 60 seconds; connection will be retried.");
             #else
-                ROS_FATAL("Software connection timed out after 60 seconds. Exiting program.");
+                ROS_FATAL("Software connection timed out after 60 seconds; connection will be retried.");
             #endif
             
             if (odinDevice) {
                 lidar_close_device(odinDevice);
-                lidar_destory_device(odinDevice);
-                odinDevice = nullptr;
+                lidar_unregister_stream_callback(odinDevice);
             }
             
             g_connection_timeout = true;
@@ -1439,9 +1542,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             #else
                 ROS_ERROR("Failed to get device firmware version, potential incompatible, please upgrade device firmware and retry.");
             #endif
-            system("pkill -f rviz");
-            system("pkill -f host_sdk_sample");
-            exit(1);
+            return;
         }
         else {
             #ifdef ROS2
@@ -1478,9 +1579,8 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                 #else
                     ROS_ERROR("The soc version is too low, please upgrade the device firmware to at least %d.%d.%d\n",required_firmware_version_major,required_firmware_version_minor,required_firmware_version_patch);
                 #endif
-                system("pkill -f rviz");
-                system("pkill -f host_sdk_sample");
-                exit(1);
+                g_shutdown_requested = true;
+                return;
             }
         }
 
@@ -1492,8 +1592,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                     ROS_ERROR("Enable log failed");
                 #endif
                 lidar_close_device(odinDevice);
-                lidar_destory_device(odinDevice);
-                odinDevice = nullptr;
+                lidar_unregister_stream_callback(odinDevice);
                 return;
             }
 
@@ -1510,6 +1609,10 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             #endif
         }
 
+        if (signalRequested || g_shutdown_requested || !deviceLifecycle.IsCurrent(event.generation)) return;
+
+        lidar_device_initial_state_e currentState;
+        if (lidar_get_device_state(&currentState) == 0) deviceInfo.initial_state = currentState;
         bool need_open_device = true;
         bool get_calib_file = true;
         switch (device->initial_state) {
@@ -1529,13 +1632,21 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                 #endif
                 break;
             case LIDAR_DEVICE_STREAMING:
+                need_open_device = false;
+                get_calib_file = false;
                 #ifdef ROS2
-                    RCLCPP_WARN(rclcpp::get_logger("device_cb"), "Device state: streaming, this should not happen, exitting...");
+                    RCLCPP_WARN(rclcpp::get_logger("device_cb"), "Device is still streaming after reconnect; stopping streams before reconfiguration");
                 #else
-                    ROS_WARN("Device state: streaming, this should not happen, exitting...");
+                    ROS_WARN("Device is still streaming after reconnect; stopping streams before reconfiguration");
                 #endif
-                system("pkill -f rviz");
-                exit(1);
+                if (lidar_stop_stream(odinDevice, type) != 0) {
+                    #ifdef ROS2
+                        RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Failed to stop existing streams; connection will be retried");
+                    #else
+                        ROS_ERROR("Failed to stop existing streams; connection will be retried");
+                    #endif
+                    return;
+                }
                 break;
             case LIDAR_DEVICE_STREAM_STOPPED:
                 need_open_device = false;
@@ -1562,8 +1673,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                 #else
                     ROS_ERROR("Open device failed");
                 #endif
-                lidar_destory_device(odinDevice);
-                odinDevice = nullptr;
+                lidar_unregister_stream_callback(odinDevice);
                 return;
             }
         }
@@ -1578,19 +1688,26 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         calib_file_ = calib_config;
         // Also fetch when the calib file is missing at the target path, so a resume
         // (STREAM_STOPPED) on a fresh runtime dir still produces calib.yaml.
-        bool need_calib_file = get_calib_file || !std::filesystem::exists(calib_config);
+        bool need_calib_file = get_calib_file || !odin_ros_driver::ValidateCalibrationFile(calib_config);
         if (need_calib_file) {
-            if (lidar_get_calib_file(odinDevice, calib_runtime_dir.c_str())) {
+            const auto downloadDir = std::filesystem::path(calib_runtime_dir) / ("calib_download_" + std::to_string(getpid()) + "_" + std::to_string(event.generation));
+            std::filesystem::create_directories(downloadDir);
+            const auto downloadedCalib = downloadDir / "calib.yaml";
+            const int downloadResult = lidar_get_calib_file(odinDevice, downloadDir.c_str());
+            if (signalRequested || g_shutdown_requested || !deviceLifecycle.IsCurrent(event.generation)) return;
+            if (downloadResult != 0 || !odin_ros_driver::ValidateCalibrationFile(downloadedCalib.string())) {
                 #ifdef ROS2
                     RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Failed to get calibration file");
                 #else
                     ROS_ERROR("Failed to get calibration file");
                 #endif
                 lidar_close_device(odinDevice);
-                lidar_destory_device(odinDevice);
-                odinDevice = nullptr;
+                lidar_unregister_stream_callback(odinDevice);
                 return;
             }
+
+            std::filesystem::rename(downloadedCalib, calib_config);
+            std::filesystem::remove(downloadDir);
 
             // Print the primary save path
             #ifdef ROS2
@@ -1664,6 +1781,8 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             g_ros_object->update_data_logger_info(sn, fw_buf, algo_buf);
         }
 
+        if (signalRequested || g_shutdown_requested || !deviceLifecycle.IsCurrent(event.generation)) return;
+        std::unique_lock<std::shared_mutex> publishLock(publishMutex);
         if (std::filesystem::exists(calib_config)) {
             g_renderer = std::make_shared<rawCloudRender>();
             if (g_renderer->init(calib_config)) {
@@ -1678,6 +1797,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             #else
                     ROS_ERROR("Failed to initialize point cloud renderer");
             #endif
+                return;
                 }
         } else {
             #ifdef ROS2
@@ -1759,10 +1879,11 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                 ROS_ERROR("Set mode failed");
             #endif
             lidar_close_device(odinDevice);
-            lidar_destory_device(odinDevice);
-            odinDevice = nullptr;
+            lidar_unregister_stream_callback(odinDevice);
             return;
         }
+
+        if (signalRequested || g_shutdown_requested || !deviceLifecycle.IsCurrent(event.generation)) return;
 
         // Apply custom parameters after setting mode
         if (g_parser && !g_parser->applyCustomParameters(odinDevice)) {
@@ -1774,9 +1895,9 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         }
 
         #ifdef ROS2
-            RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Custom map mode: %d", g_custom_map_mode);
+            RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Custom map mode: %d", g_custom_map_mode.load());
         #else
-            ROS_INFO("Custom map mode: %d", g_custom_map_mode);
+            ROS_INFO("Custom map mode: %d", g_custom_map_mode.load());
         #endif
 
         // save_map=0 initialization is deferred to after lidar_start_stream()
@@ -1819,8 +1940,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                     ROS_ERROR("Relocalization map path set fail");
                 #endif
                 lidar_close_device(odinDevice);
-                lidar_destory_device(odinDevice);
-                odinDevice = nullptr;
+                lidar_unregister_stream_callback(odinDevice);
                 return;
             }
         }
@@ -1872,7 +1992,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
  
         lidar_data_callback_info_t data_callback_info;
         data_callback_info.data_callback = lidar_data_callback;
-        data_callback_info.user_data = &odinDevice;
+        data_callback_info.user_data = callbackGenerations.back().get();
 
         if (lidar_register_stream_callback(odinDevice, data_callback_info)) {
             #ifdef ROS2
@@ -1881,8 +2001,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                 ROS_ERROR("Register callback failed");
             #endif
             lidar_close_device(odinDevice);
-            lidar_destory_device(odinDevice);
-            odinDevice = nullptr;
+            lidar_unregister_stream_callback(odinDevice);
             return;
         }
         
@@ -1913,6 +2032,22 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             std::fflush(dev_status_csv_file);
         }
 
+        if (signalRequested || g_shutdown_requested || !deviceLifecycle.IsCurrent(event.generation)) return;
+        #ifdef ROS2
+            RCLCPP_INFO(rclcpp::get_logger("device_cb"), "========== [CALIB] READ <- %s ==========", calib_config.c_str());
+        #else
+            ROS_INFO("========== [CALIB] READ <- %s ==========", calib_config.c_str());
+        #endif
+        if (g_ros_object->loadCameraParams(calib_config) != 0) {
+            #ifdef ROS2
+                RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Camera calibration initialization failed; streams remain disabled");
+            #else
+                ROS_ERROR("Camera calibration initialization failed; streams remain disabled");
+            #endif
+            return;
+        }
+        if (g_sendrgb_undistort) g_ros_object->buildUndistortMap();
+
         uint32_t dtof_subframe_odr = 0;
         if (lidar_start_stream(odinDevice, type, dtof_subframe_odr)) {
             #ifdef ROS2
@@ -1921,8 +2056,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                 ROS_ERROR("Start stream failed");
             #endif
             lidar_close_device(odinDevice);
-            lidar_destory_device(odinDevice);
-            odinDevice = nullptr;
+            lidar_unregister_stream_callback(odinDevice);
             return;
         }
         
@@ -1991,8 +2125,6 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         }
 
         software_connect_timing = false;
-        deviceConnected = true;
-        deviceDisconnected = false;
         
         // Start IMU dedicated thread
         start_imu_thread();
@@ -2013,24 +2145,8 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             ROS_INFO("Command interface ready. Use: echo 'set save_map 1' > %s", g_command_file_path.c_str());
         #endif 
         
-        if (std::filesystem::exists(calib_config)) {
-            #ifdef ROS2
-                RCLCPP_INFO(rclcpp::get_logger("device_cb"), "========== [CALIB] READ <- %s ==========", calib_config.c_str());
-            #else
-                ROS_INFO("========== [CALIB] READ <- %s ==========", calib_config.c_str());
-            #endif
-            bool load_status = g_ros_object->loadCameraParams(calib_config);
-            if (g_sendrgb_undistort && load_status == 0) {
-                g_ros_object->buildUndistortMap();
-            }
-        } else {
-            #ifdef ROS2
-                RCLCPP_WARN(rclcpp::get_logger("device_cb"),
-                            "========== [CALIB] NOT FOUND <- %s (skip camera params load) ==========", calib_config.c_str());
-            #else
-                ROS_WARN("========== [CALIB] NOT FOUND <- %s (skip camera params load) ==========", calib_config.c_str());
-            #endif
-        }
+        if (signalRequested || g_shutdown_requested || !deviceLifecycle.MarkReady(event.generation)) return;
+        deviceDisconnected = false;
 
         #ifdef ROS2
             RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Software connection successful in %ld seconds", 
@@ -2077,10 +2193,42 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
     }
 }
 
+static void ProcessDeviceEvents() {
+    static std::optional<odin_ros_driver::DeviceEvent> retryEvent;
+    static std::chrono::steady_clock::time_point retryAt;
+    auto event = deviceLifecycle.TakeLatest();
+    if (event) retryEvent.reset();
+    if (!event && retryEvent && std::chrono::steady_clock::now() >= retryAt) {
+        event = retryEvent;
+        retryEvent.reset();
+    }
+    if (!event || signalRequested || g_shutdown_requested || !deviceLifecycle.IsCurrent(event->generation)) return;
+    std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+    if (!deviceLock.owns_lock()) {
+        retryEvent = event;
+        retryAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+        return;
+    }
+    StopDeviceWorkers();
+    try {
+        if (deviceLifecycle.IsCurrent(event->generation)) HandleDeviceEvent(*event);
+    } catch (const std::exception& error) {
+        #ifdef ROS2
+            RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Device initialization failed: %s", error.what());
+        #else
+            ROS_ERROR("Device initialization failed: %s", error.what());
+        #endif
+    }
+    if (event->attach && !deviceConnected && deviceLifecycle.IsCurrent(event->generation)) {
+        retryEvent = event;
+        retryAt = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    }
+}
+
 int main(int argc, char *argv[])
 {
 #ifdef ROS2
-    rclcpp::init(argc, argv);
+    rclcpp::init(argc, argv, rclcpp::InitOptions(), rclcpp::SignalHandlerOptions::None);
     auto node = std::make_shared<rclcpp::Node>("lydros_node");
     g_ros_object = std::make_shared<MultiSensorPublisher>(node);
 
@@ -2102,8 +2250,9 @@ int main(int argc, char *argv[])
     auto gps_user_data_sub = node->create_subscription<mavros_msgs::msg::GPSRAW>(
         gps_topic, rclcpp::SensorDataQoS(),
         [gps_logger, gps_clock](const mavros_msgs::msg::GPSRAW::SharedPtr msg) {
-            std::lock_guard<std::mutex> lock(device_mutex);
-            const bool connected = deviceConnected.load() && odinDevice != nullptr;
+            std::unique_lock<std::mutex> lock(device_mutex, std::try_to_lock);
+            const bool connected = lock.owns_lock() && deviceConnected.load() && odinDevice != nullptr;
+            if (!connected || signalRequested || g_shutdown_requested) return;
 
             // host_time:2 (g_use_host_ros_time == 2): the RTK/GPS stamp is
             // synced to the host wall-clock. The module works in its own
@@ -2190,9 +2339,10 @@ int main(int argc, char *argv[])
         "/odin1/get_ae",
         [](const std::shared_ptr<odin_ros_driver::srv::GetAe::Request>  /*req*/,
                  std::shared_ptr<odin_ros_driver::srv::GetAe::Response> res) {
-            if (odinDevice == nullptr) {
+            std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
                 res->success = false;
-                res->rc = -100;
+                res->rc = deviceLock.owns_lock() ? -100 : -2;
                 return;
             }
             lidar_ae_info_t info{};
@@ -2212,9 +2362,10 @@ int main(int argc, char *argv[])
         "/odin1/get_awb",
         [](const std::shared_ptr<odin_ros_driver::srv::GetAwb::Request>  /*req*/,
                  std::shared_ptr<odin_ros_driver::srv::GetAwb::Response> res) {
-            if (odinDevice == nullptr) {
+            std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
                 res->success = false;
-                res->rc = -100;
+                res->rc = deviceLock.owns_lock() ? -100 : -2;
                 return;
             }
             lidar_awb_info_t info{};
@@ -2234,9 +2385,10 @@ int main(int argc, char *argv[])
         "/odin1/set_ae",
         [](const std::shared_ptr<odin_ros_driver::srv::SetAe::Request>  req,
                  std::shared_ptr<odin_ros_driver::srv::SetAe::Response> res) {
-            if (odinDevice == nullptr) {
+            std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
                 res->success = false;
-                res->rc = -100;
+                res->rc = deviceLock.owns_lock() ? -100 : -2;
                 return;
             }
             lidar_cam_mode_e mode = (req->mode == 1)
@@ -2251,9 +2403,10 @@ int main(int argc, char *argv[])
         "/odin1/set_awb",
         [](const std::shared_ptr<odin_ros_driver::srv::SetAwb::Request>  req,
                  std::shared_ptr<odin_ros_driver::srv::SetAwb::Response> res) {
-            if (odinDevice == nullptr) {
+            std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
                 res->success = false;
-                res->rc = -100;
+                res->rc = deviceLock.owns_lock() ? -100 : -2;
                 return;
             }
             lidar_cam_mode_e mode = (req->mode == 1)
@@ -2268,9 +2421,10 @@ int main(int argc, char *argv[])
         "/odin1/get_device_logs",
         [](const std::shared_ptr<odin_ros_driver::srv::GetDeviceLogs::Request>  req,
                  std::shared_ptr<odin_ros_driver::srv::GetDeviceLogs::Response> res) {
-            if (odinDevice == nullptr) {
+            std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
                 res->success = false;
-                res->rc = -100;
+                res->rc = deviceLock.owns_lock() ? -100 : -2;
                 return;
             }
             int rc = lidar_get_logs(odinDevice, req->dest_dir.c_str());
@@ -2282,9 +2436,10 @@ int main(int argc, char *argv[])
         "/odin1/save_map",
         [](const std::shared_ptr<odin_ros_driver::srv::SaveMap::Request>  req,
                  std::shared_ptr<odin_ros_driver::srv::SaveMap::Response> res) {
-            if (odinDevice == nullptr) {
+            std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
                 res->success = false;
-                res->rc = -100;
+                res->rc = deviceLock.owns_lock() ? -100 : -2;
                 return;
             }
             int value = req->value;
@@ -2311,9 +2466,8 @@ int main(int argc, char *argv[])
                 RCLCPP_INFO(rclcpp::get_logger("service"),
                             "Map save triggered, will transfer to [%s/%s]", map_dir.c_str(), map_name.c_str());
                 g_map_transfer_in_progress.store(true);
-                std::thread([map_dir, map_name]() {
-                    int ret = lidar_save_map(odinDevice, map_dir.c_str(), map_name.c_str(), 0);
-                    g_map_transfer_in_progress.store(false);
+                StartDeviceTask([map_dir, map_name](device_handle handle) {
+                    int ret = lidar_save_map(handle, map_dir.c_str(), map_name.c_str(), 0);
                     if (ret == 0) {
                         RCLCPP_INFO(rclcpp::get_logger("map_transfer"), "Map transfer completed: %s/%s", map_dir.c_str(), map_name.c_str());
                     } else if (ret == -2) {
@@ -2321,7 +2475,7 @@ int main(int argc, char *argv[])
                     } else {
                         RCLCPP_WARN(rclcpp::get_logger("map_transfer"), "Map transfer failed, error code: %d", ret);
                     }
-                }).detach();
+                });
                 res->rc = 0;
                 res->success = true;
             } else {
@@ -2335,9 +2489,10 @@ int main(int argc, char *argv[])
         "/odin1/reset_algo",
         [](const std::shared_ptr<odin_ros_driver::srv::ResetAlgo::Request>  req,
                  std::shared_ptr<odin_ros_driver::srv::ResetAlgo::Response> res) {
-            if (odinDevice == nullptr) {
+            std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
                 res->success = false;
-                res->rc = -100;
+                res->rc = deviceLock.owns_lock() ? -100 : -2;
                 return;
             }
             int value = req->value;
@@ -2353,9 +2508,10 @@ int main(int argc, char *argv[])
         "/odin1/set_slam_mode",
         [](const std::shared_ptr<odin_ros_driver::srv::SetSlamMode::Request>  req,
                  std::shared_ptr<odin_ros_driver::srv::SetSlamMode::Response> res) {
-            if (odinDevice == nullptr) {
+            std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
                 res->success = false;
-                res->rc = -100;
+                res->rc = deviceLock.owns_lock() ? -100 : -2;
                 return;
             }
             int mode = req->mode;
@@ -2387,9 +2543,10 @@ int main(int argc, char *argv[])
         "/odin1/set_reloc_map",
         [](const std::shared_ptr<odin_ros_driver::srv::SetRelocMap::Request>  req,
                  std::shared_ptr<odin_ros_driver::srv::SetRelocMap::Response> res) {
-            if (odinDevice == nullptr) {
+            std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
                 res->success = false;
-                res->rc = -100;
+                res->rc = deviceLock.owns_lock() ? -100 : -2;
                 return;
             }
             std::string map_path = req->map_path;
@@ -2407,9 +2564,8 @@ int main(int argc, char *argv[])
                 return;
             }
             RCLCPP_INFO(rclcpp::get_logger("service"), "set_reloc_map: transferring [%s]", map_path.c_str());
-            std::thread([map_path]() {
-                int ret = lidar_set_relocalization_map(odinDevice, map_path.c_str());
-                g_map_transfer_in_progress.store(false);
+            StartDeviceTask([map_path](device_handle handle) {
+                int ret = lidar_set_relocalization_map(handle, map_path.c_str());
                 if (ret == 0) {
                     g_relocalization_map_abs_path = map_path;
                     g_relocalization_success_msg_printed = false;
@@ -2418,7 +2574,7 @@ int main(int argc, char *argv[])
                 } else {
                     RCLCPP_WARN(rclcpp::get_logger("map_transfer"), "Relocalization map swap failed, error code: %d", ret);
                 }
-            }).detach();
+            });
             res->rc = 0;
             res->success = true;
         });
@@ -2429,7 +2585,7 @@ int main(int argc, char *argv[])
         "/odin1/get_device_logs /odin1/save_map /odin1/reset_algo "
         "/odin1/set_slam_mode /odin1/set_reloc_map");
 #else
-    ros::init(argc, argv, "lydros_node");
+    ros::init(argc, argv, "lydros_node", ros::init_options::NoSigintHandler);
     ros::NodeHandle nh;
     g_ros_object = new MultiSensorPublisher(nh);
 
@@ -2447,9 +2603,10 @@ int main(int argc, char *argv[])
                              odin_ros_driver::GetAe::Response&)>(
             [](odin_ros_driver::GetAe::Request  & /*req*/,
                odin_ros_driver::GetAe::Response &res) -> bool {
-                if (odinDevice == nullptr) {
+                std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
                     res.success = false;
-                    res.rc = -100;
+                    res.rc = deviceLock.owns_lock() ? -100 : -2;
                     return true;
                 }
                 lidar_ae_info_t info{};
@@ -2474,9 +2631,10 @@ int main(int argc, char *argv[])
                              odin_ros_driver::GetAwb::Response&)>(
             [](odin_ros_driver::GetAwb::Request  & /*req*/,
                odin_ros_driver::GetAwb::Response &res) -> bool {
-                if (odinDevice == nullptr) {
+                std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
                     res.success = false;
-                    res.rc = -100;
+                    res.rc = deviceLock.owns_lock() ? -100 : -2;
                     return true;
                 }
                 lidar_awb_info_t info{};
@@ -2501,9 +2659,10 @@ int main(int argc, char *argv[])
                              odin_ros_driver::SetAe::Response&)>(
             [](odin_ros_driver::SetAe::Request  &req,
                odin_ros_driver::SetAe::Response &res) -> bool {
-                if (odinDevice == nullptr) {
+                std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
                     res.success = false;
-                    res.rc = -100;
+                    res.rc = deviceLock.owns_lock() ? -100 : -2;
                     return true;
                 }
                 lidar_cam_mode_e mode = (req.mode == 1)
@@ -2523,9 +2682,10 @@ int main(int argc, char *argv[])
                              odin_ros_driver::SetAwb::Response&)>(
             [](odin_ros_driver::SetAwb::Request  &req,
                odin_ros_driver::SetAwb::Response &res) -> bool {
-                if (odinDevice == nullptr) {
+                std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
                     res.success = false;
-                    res.rc = -100;
+                    res.rc = deviceLock.owns_lock() ? -100 : -2;
                     return true;
                 }
                 lidar_cam_mode_e mode = (req.mode == 1)
@@ -2545,9 +2705,10 @@ int main(int argc, char *argv[])
                              odin_ros_driver::GetDeviceLogs::Response&)>(
             [](odin_ros_driver::GetDeviceLogs::Request  &req,
                odin_ros_driver::GetDeviceLogs::Response &res) -> bool {
-                if (odinDevice == nullptr) {
+                std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
                     res.success = false;
-                    res.rc = -100;
+                    res.rc = deviceLock.owns_lock() ? -100 : -2;
                     return true;
                 }
                 int rc = lidar_get_logs(odinDevice, req.dest_dir.c_str());
@@ -2564,9 +2725,10 @@ int main(int argc, char *argv[])
                              odin_ros_driver::SaveMap::Response&)>(
             [](odin_ros_driver::SaveMap::Request  &req,
                odin_ros_driver::SaveMap::Response &res) -> bool {
-                if (odinDevice == nullptr) {
+                std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
                     res.success = false;
-                    res.rc = -100;
+                    res.rc = deviceLock.owns_lock() ? -100 : -2;
                     return true;
                 }
                 int value = req.value;
@@ -2591,17 +2753,16 @@ int main(int argc, char *argv[])
                     std::string map_name = g_mapping_result_file_name != "" ? g_mapping_result_file_name : "map_" + std::string(map_save_time) + ".bin";
                     ROS_INFO("Map save triggered, will transfer to [%s/%s]", map_dir.c_str(), map_name.c_str());
                     g_map_transfer_in_progress.store(true);
-                    std::thread([map_dir, map_name]() {
-                        int ret = lidar_save_map(odinDevice, map_dir.c_str(), map_name.c_str(), 0);
-                        g_map_transfer_in_progress.store(false);
-                        if (ret == 0) {
+                    StartDeviceTask([map_dir, map_name](device_handle handle) {
+                        int ret = lidar_save_map(handle, map_dir.c_str(), map_name.c_str(), 0);
+                            if (ret == 0) {
                             ROS_INFO("Map transfer completed: %s/%s", map_dir.c_str(), map_name.c_str());
                         } else if (ret == -2) {
                             ROS_WARN("Map transfer skipped: device is busy with another transfer");
                         } else {
                             ROS_WARN("Map transfer failed, error code: %d", ret);
                         }
-                    }).detach();
+                    });
                     res.rc = 0;
                     res.success = true;
                 } else {
@@ -2620,9 +2781,10 @@ int main(int argc, char *argv[])
                              odin_ros_driver::ResetAlgo::Response&)>(
             [](odin_ros_driver::ResetAlgo::Request  &req,
                odin_ros_driver::ResetAlgo::Response &res) -> bool {
-                if (odinDevice == nullptr) {
+                std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
                     res.success = false;
-                    res.rc = -100;
+                    res.rc = deviceLock.owns_lock() ? -100 : -2;
                     return true;
                 }
                 int value = req.value;
@@ -2642,9 +2804,10 @@ int main(int argc, char *argv[])
                              odin_ros_driver::SetSlamMode::Response&)>(
             [](odin_ros_driver::SetSlamMode::Request  &req,
                odin_ros_driver::SetSlamMode::Response &res) -> bool {
-                if (odinDevice == nullptr) {
+                std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
                     res.success = false;
-                    res.rc = -100;
+                    res.rc = deviceLock.owns_lock() ? -100 : -2;
                     return true;
                 }
                 int mode = req.mode;
@@ -2677,9 +2840,10 @@ int main(int argc, char *argv[])
                              odin_ros_driver::SetRelocMap::Response&)>(
             [](odin_ros_driver::SetRelocMap::Request  &req,
                odin_ros_driver::SetRelocMap::Response &res) -> bool {
-                if (odinDevice == nullptr) {
+                std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
                     res.success = false;
-                    res.rc = -100;
+                    res.rc = deviceLock.owns_lock() ? -100 : -2;
                     return true;
                 }
                 std::string map_path = req.map_path;
@@ -2697,9 +2861,8 @@ int main(int argc, char *argv[])
                     return true;
                 }
                 ROS_INFO("set_reloc_map: transferring [%s]", map_path.c_str());
-                std::thread([map_path]() {
-                    int ret = lidar_set_relocalization_map(odinDevice, map_path.c_str());
-                    g_map_transfer_in_progress.store(false);
+                StartDeviceTask([map_path](device_handle handle) {
+                    int ret = lidar_set_relocalization_map(handle, map_path.c_str());
                     if (ret == 0) {
                         g_relocalization_map_abs_path = map_path;
                         g_relocalization_success_msg_printed = false;
@@ -2707,7 +2870,7 @@ int main(int argc, char *argv[])
                     } else {
                         ROS_WARN("Relocalization map swap failed, error code: %d", ret);
                     }
-                }).detach();
+                });
                 res.rc = 0;
                 res.success = true;
                 return true;
@@ -2749,6 +2912,7 @@ int main(int argc, char *argv[])
             #else
                 ROS_ERROR("Failed to load config file: %s", config_file.c_str());
             #endif
+            ShutdownDriver();
             return -1;
         }
 
@@ -2878,8 +3042,11 @@ int main(int argc, char *argv[])
             #else
                 ROS_ERROR("Lidar system init failed");
             #endif
+            ShutdownDriver();
             return -1;
         }
+
+        sdkInitialized = true;
 
         // Re-arm SIGINT/SIGTERM handlers: lidar_system_init() installs the
         // SDK's internal crash handler which overrides our handlers above and
@@ -2908,7 +3075,8 @@ int main(int argc, char *argv[])
 
         bool usbPresent = false;
         bool usbVersionChecked = false; 
-        while (!deviceConnected) {
+        while (!deviceConnected && !signalRequested && !g_shutdown_requested) {
+            ProcessDeviceEvents();
             #ifdef ROS2
             if (!rclcpp::ok()) {
                 break;
@@ -2928,21 +3096,20 @@ int main(int argc, char *argv[])
                     if (!isUsb3OrHigher(TARGET_VENDOR, TARGET_PRODUCT)) {
                         #ifdef ROS2
                             RCLCPP_FATAL(node->get_logger(), 
-                                        "Device connected to USB 2.0 port. This device requires USB 3.0 or higher. Exiting program.Please use USB 3.0 and restart the device.");
+                                        "USB 3.0 or higher is required; waiting for a compatible connection.");
                         #else
-                            ROS_FATAL("Device connected to USB 2.0 port. This device requires USB 3.0 or higher. Exiting program .Please use USB 3.0 and restart the device.");
+                            ROS_FATAL("USB 3.0 or higher is required; waiting for a compatible connection.");
                         #endif
                         
-                        lidar_system_deinit();
-                        return 1;
+                        g_usb_version_error = true;
                     }
                 }
             }
             
             #ifdef ROS2
-                std::this_thread::sleep_for(std::chrono::seconds(1));
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
             #else
-                ros::Duration(1.0).sleep();
+                ros::Duration(0.1).sleep();
             #endif
         }
     } catch (const std::exception& e) {
@@ -2951,11 +3118,12 @@ int main(int argc, char *argv[])
         #else
                 ROS_ERROR("Exception: %s", e.what());
         #endif
-                lidar_system_deinit();
+                ShutdownDriver();
                 return -1;
     }
 
     if (!deviceConnected) {
+        ShutdownDriver();
         #ifdef ROS2
         if (g_ros_object) {
             g_ros_object->stopTfExtraPublishTimer();
@@ -2970,18 +3138,20 @@ int main(int argc, char *argv[])
         }
         ros::shutdown();
         #endif
-        return 1;
+        return signalRequested ? 0 : 1;
     }
 
     bool disconnect_msg_printed = false;
+    try {
     #ifdef ROS2
         // Create 10Hz Rate object
         rclcpp::Rate rate(10);
         
-        while (rclcpp::ok()) {
+        while (rclcpp::ok() && !signalRequested && !g_shutdown_requested) {
+            ProcessDeviceEvents();
             rclcpp::spin_some(node);
             // Check device disconnection status
-            if (deviceDisconnected.load()) {
+            if (!deviceConnected.load()) {
                 if (!disconnect_msg_printed) {
                     RCLCPP_INFO(node->get_logger(), "Device disconnected, waiting for reconnection...");
                     disconnect_msg_printed = true;
@@ -2994,7 +3164,14 @@ int main(int argc, char *argv[])
             
             // Data processing when device is connected
             if (g_sendcloudrender) {
-                g_ros_object->try_process_pair();  
+                std::shared_lock<std::shared_mutex> publishLock(publishMutex);
+                if (deviceConnected) {
+                    try {
+                        g_ros_object->try_process_pair();
+                    } catch (const std::exception& error) {
+                        ReportPublishFailure(LIDAR_DT_RAW_DTOF, error);
+                    }
+                }
             }
             
             // Check for command file
@@ -3007,15 +3184,15 @@ int main(int argc, char *argv[])
             // Wait 0.1 seconds
             rate.sleep();
         }
-        rclcpp::shutdown();
     #else
         // Create 10Hz Rate object
         ros::Rate rate(10);
-        while (ros::ok()) {
+        while (ros::ok() && !signalRequested && !g_shutdown_requested) {
+            ProcessDeviceEvents();
             ros::spinOnce();
 
             // Check device disconnection status
-            if (deviceDisconnected.load()) {
+            if (!deviceConnected.load()) {
                 if (!disconnect_msg_printed) {
                     ROS_INFO("Device disconnected, waiting for reconnection...");
                     disconnect_msg_printed = true;
@@ -3028,7 +3205,14 @@ int main(int argc, char *argv[])
             
             // Data processing when device is connected
             if (g_sendcloudrender) {
-                g_ros_object->try_process_pair();  
+                std::shared_lock<std::shared_mutex> publishLock(publishMutex);
+                if (deviceConnected) {
+                    try {
+                        g_ros_object->try_process_pair();
+                    } catch (const std::exception& error) {
+                        ReportPublishFailure(LIDAR_DT_RAW_DTOF, error);
+                    }
+                }
             }
             
             // Check for command file
@@ -3041,8 +3225,15 @@ int main(int argc, char *argv[])
             // Wait 0.1 seconds
             rate.sleep();
         }
-        ros::shutdown();
     #endif
+    } catch (const std::exception& error) {
+        #ifdef ROS2
+            RCLCPP_ERROR(node->get_logger(), "Driver processing failed: %s", error.what());
+        #else
+            ROS_ERROR("Driver processing failed: %s", error.what());
+        #endif
+    }
+    ShutdownDriver();
 
     // Cleanup on normal program exit
     if (odinDevice) {

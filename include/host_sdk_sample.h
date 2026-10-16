@@ -392,6 +392,24 @@ public:
     using ImageConstPtr = sensor_msgs::ImageConstPtr;
     using PointCloud2ConstPtr = sensor_msgs::PointCloud2ConstPtr;
 #endif
+void ClearPendingData() {
+    {
+        std::scoped_lock lock(rgb_queue_mutex_, pcd_queue_mutex_);
+        rgb_image_queue_.clear();
+        pcd_queue_.clear();
+    }
+    #ifdef ROS2
+    {
+        std::lock_guard<std::mutex> lock(tf_cache_mutex_);
+        has_cached_tf_ = false;
+    }
+    #endif
+    {
+        std::lock_guard<std::mutex> lock(extrinsics_mutex_);
+        has_cached_extrinsics_ = false;
+    }
+}
+
 void try_process_pair() {
     // Record queue status
     size_t rgb_size, pcd_size;
@@ -1892,7 +1910,7 @@ private:
 
     CameraParams m_camera_params;
     std::unique_ptr<mini_vikit::PolynomialCamera> m_cam;
-    bool m_cam_init_success;
+    bool m_cam_init_success = false;
     bool m_undistort_map_init_success = false;
     cv::Mat m_undistort_map_x;
     cv::Mat m_undistort_map_y;
@@ -1972,6 +1990,7 @@ public:
                 if (!tf_thread_running_.load()) break;
                 if (!getRosNodeControl()->sendOdomBaseLinkTF()) continue;
 
+                try {
                 std::lock_guard<std::mutex> lock(tf_cache_mutex_);
                 if (!has_cached_tf_) continue;
 
@@ -2015,6 +2034,10 @@ public:
                         tf_til.transform.rotation.w = q_til.w();
                         tf_broadcaster->sendTransform(tf_til);
                     }
+                }
+                } catch (const std::exception& error) {
+                    RCLCPP_ERROR_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
+                                         "Extra TF publish failed: %s", error.what());
                 }
             }
         });
