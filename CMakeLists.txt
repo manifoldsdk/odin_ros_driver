@@ -168,6 +168,7 @@ if(ROS_VERSION STREQUAL "ROS1")
         GetAe.srv
         GetAwb.srv
         SetAe.srv
+        SetAeMaxExposure.srv
         SetAwb.srv
         GetDeviceLogs.srv
         SaveMap.srv
@@ -300,13 +301,14 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     )
 
     # ---- AE/AWB debug services ----
-    # Generate C++ bindings for the 4 .srv files in srv/. The generated
+    # Generate C++ bindings for the .srv files in srv/. The generated
     # headers are linked into host_sdk_sample so it can host the services.
     find_package(rosidl_default_generators REQUIRED)
     rosidl_generate_interfaces(${PROJECT_NAME}
         "srv/GetAe.srv"
         "srv/GetAwb.srv"
         "srv/SetAe.srv"
+        "srv/SetAeMaxExposure.srv"
         "srv/SetAwb.srv"
         "srv/GetDeviceLogs.srv"
         "srv/SaveMap.srv"

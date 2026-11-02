@@ -52,6 +52,7 @@ bool YamlParser::loadConfig() {
         YAML::Node register_keys = config["register_keys"];
         register_keys_.clear();
         register_keys_str_val_.clear();
+        register_keys_float_val_.clear();
         custom_parameters_.clear();
 
         // Print number of key-value pairs found
@@ -175,6 +176,10 @@ const std::map<std::string, std::string>& YamlParser::getRegisterKeysStrVal() co
     return register_keys_str_val_;
 }
 
+const std::map<std::string, double>& YamlParser::getRegisterKeysFloatVal() const {
+    return register_keys_float_val_;
+}
+
 void YamlParser::printConfig() const {
     std::cerr << "Configuration Keys:" << std::endl;
     if (register_keys_.empty()) {
@@ -189,6 +194,14 @@ void YamlParser::printConfig() const {
         std::cerr << "  (str_val empty)" << std::endl;
     } else {
         for (const auto& [key, value] : register_keys_str_val_) {
+            std::cerr << "  " << key << ": " << value << std::endl;
+        }
+    }
+
+    if (register_keys_float_val_.empty()) {
+        std::cerr << "  (float_val empty)" << std::endl;
+    } else {
+        for (const auto& [key, value] : register_keys_float_val_) {
             std::cerr << "  " << key << ": " << value << std::endl;
         }
     }

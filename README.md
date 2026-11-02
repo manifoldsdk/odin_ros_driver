@@ -326,19 +326,20 @@ float32 rgb           // RGB value
 | custom_init_pos        | Initialization Position (currently unused). |
 | relocalization_map_abs_path        | Absolute Path to Map File: Used for relocalization mode. |
 | mapping_result_dest_dir and mapping_result_file_name| Path and Name for Saving Maps in Mapping Mode: If not specified, default values will be used. |
+| ae_max_exposure_time  | Upper limit of the RGB camera AE (auto exposure) loop in milliseconds, applied via `lidar_set_ae_max_exposure_time()` **after the data stream has started** (the device only accepts this command while streaming). `0` = disabled (device default); valid range `>= 5.0`, practical ceiling `33.0` (frame period at `dtof_fps=290`). Can also be changed at runtime via `/odin1/set_ae_max_exposure`. <br>RGB 相机 AE 自动曝光上限（毫秒），在**数据流启动后**通过 `lidar_set_ae_max_exposure_time()` 下发（设备仅在开流后接受该命令）。`0` 表示不修改（设备默认）；有效值 `>= 5.0`，实用上限 `33.0`（`dtof_fps=290` 时的帧周期）。也可通过 `/odin1/set_ae_max_exposure` 在运行时修改。 |
 
 ### 4.6 Runtime AE/AWB Tuning via ROS Service / 通过 ROS Service 在线调节 AE/AWB
 
-The driver hosts four ROS services that let a side terminal tune the
-camera's auto exposure (AE) and auto white balance (AWB) at runtime,
-while the main data streams keep flowing. The same SDK call is shared
-with the driver's main control path and serialised by an internal
-mutex, so it is safe to invoke these services concurrently with normal
-operation.
+The driver hosts five ROS services that let a side terminal tune the
+camera's auto exposure (AE), the AE upper exposure limit and the auto
+white balance (AWB) at runtime, while the main data streams keep
+flowing. The same SDK calls are shared with the driver's main control
+path and serialised by an internal mutex, so it is safe to invoke these
+services concurrently with normal operation.
 
-驱动启动后会注册 4 个 ROS Service，允许在不重启 driver 的前提下，从另一个终端动态调节
-相机的自动曝光（AE）和自动白平衡（AWB）。底层 SDK 调用与驱动主控制路径共享同一把
-互斥锁，因此可以与正常数据流并发调用。
+驱动启动后会注册 5 个 ROS Service，允许在不重启 driver 的前提下，从另一个终端动态调节
+相机的自动曝光（AE）、AE 最大曝光上限与自动白平衡（AWB）。底层 SDK 调用与驱动主控制
+路径共享同一把互斥锁，因此可以与正常数据流并发调用。
 
 **Service list / Service 一览**
 
@@ -347,6 +348,7 @@ operation.
 | `/odin1/get_ae`  | `odin_ros_driver/srv/GetAe`  | Query current AE status / 查询当前 AE 状态 |
 | `/odin1/get_awb` | `odin_ros_driver/srv/GetAwb` | Query current AWB status / 查询当前 AWB 状态 |
 | `/odin1/set_ae`  | `odin_ros_driver/srv/SetAe`  | Set AE mode and (manual) exposure / gain / 设置 AE 模式和手动曝光/增益 |
+| `/odin1/set_ae_max_exposure` | `odin_ros_driver/srv/SetAeMaxExposure` | Set the AE upper exposure limit used by AUTO mode / 设置 AE 自动模式可用的最大曝光上限 |
 | `/odin1/set_awb` | `odin_ros_driver/srv/SetAwb` | Set AWB mode and (manual) R/B gain / 设置 AWB 模式和手动 R/B 增益 |
 
 #### 4.6.1 Request fields, ranges, physical meaning / 请求字段、范围与物理含义
@@ -358,6 +360,12 @@ operation.
 | `mode` | `0` (AUTO) or / 或 `1` (MANUAL) | `0` = device runs its own AE loop, the two floats below are ignored / 设备自动调 AE，下方参数被忽略<br>`1` = device locks AE and applies the provided values / 设备锁 AE 并应用提供的值 |
 | `exposure_time` | `0.0001` ~ `0.033` s (manual only / 仅手动模式) | Sensor exposure time per frame. Longer = brighter but more motion blur / 每帧传感器曝光时间。越长越亮但运动模糊增大 |
 | `gain` | `1.0` ~ `64.0` (manual only / 仅手动模式) | Analog gain. Higher = brighter output but worse SNR / 模拟增益。越大越亮但信噪比越差 |
+
+**`SetAeMaxExposure.Request`**
+
+| Field | Range / 范围 | Meaning / 含义 |
+|---|---|---|
+| `max_exposure_ms` | `>= 5.0` ms (practical ceiling `33.0` / 实用上限 33.0) | Upper clamp for the AE AUTO convergence loop. Shorter = less motion blur but darker dim scenes. Independent of `SetAe.mode` / AE 自动收敛的曝光时间上限。越短运动模糊越小但暗光画面越暗；与 `SetAe.mode` 无关 |
 
 **`SetAwb.Request`**
 
@@ -372,9 +380,12 @@ operation.
 
 #### 4.6.2 Response fields / 响应字段
 
-All four services return a `success` (bool) and `rc` (int32). Get
-services additionally return the queried state.
-4 个 Service 都返回 `success` (bool) 与 `rc` (int32)。Get 类还会返回查询到的状态字段。
+All five services return a `success` (bool) and `rc` (int32). Get
+services additionally return the queried state; `SetAeMaxExposure`
+returns only `success` / `rc` because the device cannot read the limit
+back.
+5 个 Service 都返回 `success` (bool) 与 `rc` (int32)。Get 类还会返回查询到的状态字段；
+`SetAeMaxExposure` 只返回 `success` / `rc`，因为设备侧无法回读该上限值。
 
 **`GetAe.Response`**
 
@@ -434,6 +445,10 @@ ros2 service call /odin1/set_ae odin_ros_driver/srv/SetAe "{mode: 0}"
 ros2 service call /odin1/set_ae odin_ros_driver/srv/SetAe \
   "{mode: 1, exposure_time: 0.010, gain: 4.0}"
 
+# Clamp the AUTO exposure loop at 20 ms / 把自动曝光的最大曝光时间限制为 20ms
+ros2 service call /odin1/set_ae_max_exposure odin_ros_driver/srv/SetAeMaxExposure \
+  "{max_exposure_ms: 20.0}"
+
 # Set AWB to MANUAL with rgain=1.5, bgain=2.0
 # 设置 AWB 为手动，rgain=1.5、bgain=2.0
 ros2 service call /odin1/set_awb odin_ros_driver/srv/SetAwb \
@@ -445,6 +460,7 @@ ros2 service call /odin1/set_awb odin_ros_driver/srv/SetAwb "{mode: 0}"
 
 # Inspect srv definition / 查看 srv 完整定义
 ros2 interface show odin_ros_driver/srv/SetAe
+ros2 interface show odin_ros_driver/srv/SetAeMaxExposure
 ```
 
 ROS1 (Noetic) — start the driver, then in a side terminal:
@@ -460,6 +476,9 @@ rosservice call /odin1/get_awb
 # Set AE manual / 设置 AE 手动
 rosservice call /odin1/set_ae  "{mode: 1, exposure_time: 0.010, gain: 4.0}"
 
+# Clamp the AUTO exposure loop at 20 ms / 把自动曝光的最大曝光时间限制为 20ms
+rosservice call /odin1/set_ae_max_exposure "{max_exposure_ms: 20.0}"
+
 # Set AWB manual / 设置 AWB 手动
 rosservice call /odin1/set_awb "{mode: 1, rgain: 1.5, bgain: 2.0}"
 
@@ -470,6 +489,7 @@ rosservice call /odin1/set_awb "{mode: 0, rgain: 0.0, bgain: 0.0}"
 
 # Inspect srv definition / 查看 srv 完整定义
 rossrv show odin_ros_driver/SetAe
+rossrv show odin_ros_driver/SetAeMaxExposure
 ```
 
 #### 4.6.5 Recommended starting points by scene / 不同场景推荐起步参数
@@ -482,6 +502,14 @@ rossrv show odin_ros_driver/SetAe
 | Normal indoor / 普通室内 | `0.008` ~ `0.015` s | `2.0` ~ `8.0` |
 | Dim light / 暗光环境 | `0.020` ~ `0.030` s | `8.0` ~ `32.0` |
 | Very dark / 极暗 | `0.033` s | `32.0` ~ `64.0` |
+
+**AE upper exposure limit (`max_exposure_ms`)**
+
+| Scene / 场景 | `max_exposure_ms` |
+|---|---|
+| Fast motion, low blur wanted / 快速运动、需低模糊 | `5.0` ~ `10.0` ms |
+| Handheld walking / 手持步行 | `15.0` ~ `20.0` ms |
+| Static, dim scene / 静态暗光 | `25.0` ~ `33.0` ms |
 
 **AWB (`rgain`, `bgain`)**
 
@@ -507,6 +535,19 @@ rossrv show odin_ros_driver/SetAe
   period `1 / fps`. With `dtof_fps = 290` (29 Hz, period ~34 ms)
   the upper limit 0.033 s is already at the frame boundary.
   最大可用 `exposure_time` 受帧周期 `1/fps` 限制。在 `dtof_fps = 290`（29 Hz、周期 ~34 ms）下，上限 0.033 s 已经贴到帧边界。
+- `/odin1/set_ae_max_exposure` does **not** switch the AE mode; it only
+  clamps the upper limit the AUTO loop may use. Values below the 5.0 ms
+  device floor are rejected with `rc = 403`.
+  `/odin1/set_ae_max_exposure` **不会**切换 AE 模式，仅限制 AUTO 收敛时可用的曝光上限；
+  低于设备下限 5.0 ms 会被拒绝并返回 `rc = 403`。
+- The limit is reset on every reconnect: it is re-applied with
+  `ae_max_exposure_time` from `config/control_command.yaml` once the
+  data stream is up (`0` = keep the device default, no command is sent).
+  Calling the service before the stream is active returns a device
+  error, because opcode 0x26 is only accepted while streaming.
+  每次重连后该上限会恢复为 `config/control_command.yaml` 中 `ae_max_exposure_time` 的值，
+  并在**数据流启动后**重新下发（`0` 表示保持设备默认值，不下发命令）。
+  若在开流前调用该服务，设备会报错，因为 opcode 0x26 仅在开流后接受。
 
 ## 4.7 Runtime Device Control / 运行时设备控制
 

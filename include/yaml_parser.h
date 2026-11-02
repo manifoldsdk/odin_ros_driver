@@ -66,6 +66,7 @@ public:
     bool loadConfig();
     const std::map<std::string, int>& getRegisterKeys() const;
     const std::map<std::string, std::string>& getRegisterKeysStrVal() const;
+    const std::map<std::string, double>& getRegisterKeysFloatVal() const;
     const std::map<std::string, ParameterValue>& getCustomParameters() const;
     void printConfig() const;
     bool applyCustomParameters(device_handle device);
@@ -101,7 +102,8 @@ private:
 
     // Keys whose YAML value is a floating-point number (not int).
     std::unordered_set<std::string> allowed_key_w_float_val = {
-        "overlay_alpha"
+        "overlay_alpha",
+        "ae_max_exposure_time"
     };
 
     // Whitelist of all recognized integer-valued keys.

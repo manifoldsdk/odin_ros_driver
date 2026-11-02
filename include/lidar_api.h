@@ -777,6 +777,23 @@ int lidar_set_ae_param(device_handle device, lidar_cam_mode_e mode,
                        float exposure_time, float gain);
 
 /**
+ * @brief Set the AE (auto exposure) maximum exposure time limit.
+ *
+ * Sends AE opcode 0x26 with a single little-endian float32 parameter.
+ *
+ * Behaviour:
+ *   - Applies in AUTO mode as the upper clamp the AE convergence loop
+ *     is allowed to use.
+ *   - The device enforces a minimum of 5.0 ms; smaller values are
+ *     rejected with rc = 403 (LIDAR_AE_PARAM_OUT_OF_RANGE).
+ *
+ * @param device           Device handle.
+ * @param max_exposure_ms  Maximum exposure time in milliseconds (>= 5.0).
+ * @return See return value convention above.
+ */
+int lidar_set_ae_max_exposure_time(device_handle device, float max_exposure_ms);
+
+/**
  * @brief Set AWB mode and (in manual mode) R/B channel gains.
  *
  * Behaviour:

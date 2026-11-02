@@ -1,0 +1,18 @@
+# Set the AE (auto exposure) maximum exposure time limit.
+#
+# Sends AE opcode 0x26. This limit is the upper clamp that the device's
+# automatic exposure convergence loop is allowed to use, so it takes effect
+# in AUTO mode (it does not switch AE into manual mode).
+#
+# Unit: milliseconds. Device-enforced minimum is 5.0 ms; values below that
+# are rejected with rc=403 (parameter out of range). The limit should stay
+# below the frame period (at dtof_fps=290 the period is ~34 ms, so 33.0 ms
+# is a practical ceiling).
+#
+# A shorter limit reduces motion blur in fast-motion scenes but darkens dim
+# scenes. There is no SDK getter for this value; query the AE stream state
+# via /odin1/get_ae instead.
+float32 max_exposure_ms
+---
+bool success
+int32 rc                # 0=ok, >0=device error (400..405 or 0xFF), <0=SDK error

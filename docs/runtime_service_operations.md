@@ -41,9 +41,38 @@ driver 运行期间注册以下服务。所有服务返回 `success` (bool) 和 
 
 ### 2.1 AE/AWB Services / AE/AWB 服务
 
-See `README.md` section `4.6` for `/odin1/get_ae`, `/odin1/get_awb`, `/odin1/set_ae`, `/odin1/set_awb`.
+See `README.md` section `4.6` for `/odin1/get_ae`, `/odin1/get_awb`, `/odin1/set_ae`, `/odin1/set_ae_max_exposure`, `/odin1/set_awb`.
 
-AE/AWB 服务 `/odin1/get_ae`、`/odin1/get_awb`、`/odin1/set_ae`、`/odin1/set_awb` 详见 `README.md` 4.6 节。
+AE/AWB 服务 `/odin1/get_ae`、`/odin1/get_awb`、`/odin1/set_ae`、`/odin1/set_ae_max_exposure`、`/odin1/set_awb` 详见 `README.md` 4.6 节。
+
+**Set AE upper exposure limit / 设置 AE 最大曝光上限**
+
+**Service / 服务**: `/odin1/set_ae_max_exposure`  
+**Type / 类型**: `odin_ros_driver/srv/SetAeMaxExposure`
+
+Clamps the upper exposure limit used by the AE AUTO convergence loop (AE opcode 0x26). It does **not** switch AE into manual mode, so it is complementary to `/odin1/set_ae`, not a replacement. The command is only accepted by the device **after the data stream has started**; the device enforces a 5.0 ms minimum and returns `rc = 403` for smaller values.
+
+限制 AE 自动收敛循环可用的最大曝光时间（AE opcode 0x26）。它**不会**把 AE 切到手动模式，因此与 `/odin1/set_ae` 互补而非替代。设备**仅在数据流启动后**接受该命令；设备最小值为 5.0 ms，更小的值返回 `rc = 403`。
+
+| Field | Type | Description / 说明 |
+|---|---|---|
+| `max_exposure_ms` | `float32` | Maximum exposure time in milliseconds (`>= 5.0`; practical ceiling `33.0` at `dtof_fps=290`). `max_exposure_ms` 最大曝光时间（毫秒，`>= 5.0`；`dtof_fps=290` 时实用上限 33.0）。 |
+
+Response / 响应: `success` (`bool`), `rc` (`int32`, see section 3 and `README.md` 4.6.3). There is no SDK getter for this value, so the service returns no readback field. / 本服务只返回 `success` 与 `rc`（见第 3 节及 `README.md` 4.6.3）；SDK 无对应查询接口，因此不回读该值。
+
+**Usage / 调用**
+
+ROS2:
+```bash
+ros2 service call /odin1/set_ae_max_exposure odin_ros_driver/srv/SetAeMaxExposure '{max_exposure_ms: 20.0}'
+```
+
+ROS1:
+```bash
+rosservice call /odin1/set_ae_max_exposure '{max_exposure_ms: 20.0}'
+```
+
+The same limit can be set at startup with `ae_max_exposure_time` in `config/control_command.yaml` (`0` = keep the device default). / 同一上限也可通过 `config/control_command.yaml` 中的 `ae_max_exposure_time` 在启动时设置（`0` 表示保持设备默认值）。
 
 ### 2.2 Device Log Retrieval / 设备日志获取
 
@@ -253,3 +282,4 @@ Parameters related to runtime operations in `config/control_command.yaml`:
 | `mapping_result_dest_dir` | Directory for saved maps. 保存地图的目录。 |
 | `mapping_result_file_name` | File name for saved map. 保存地图的文件名。 |
 | `relocalization_map_abs_path` | Absolute path to pre-built map for relocalization. 重定位所需的预建地图绝对路径。 |
+| `ae_max_exposure_time` | AE (auto exposure) upper exposure limit in milliseconds, applied **after the data stream has started** (the device only accepts it while streaming). `0` = disabled (device default); valid `>= 5.0`; practical ceiling `33.0`. AE 自动曝光上限（毫秒），在**数据流启动后**下发（设备仅在开流后接受）。`0` 表示关闭（设备默认）；有效值 `>= 5.0`；实用上限 33.0。 |

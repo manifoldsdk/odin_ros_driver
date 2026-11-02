@@ -82,6 +82,33 @@ register_keys:
   rgb_height: 1296       # Image height in pixels / 图像高度（像素）
   rgb_fps: 100        # Frame rate * 10 (300 = 30fps, 145 = 14.5fps) / 帧率×10
 
+  ########################################################
+  # AE (auto exposure) upper limit for the RGB camera
+  # RGB 相机自动曝光(AE)最大曝光时间上限
+  #
+  # Applied via lidar_set_ae_max_exposure_time() AFTER the data stream has
+  # started (the device only accepts AE opcode 0x26 while streaming), and
+  # used as the upper clamp of the AE convergence loop.
+  # 在数据流启动后通过 lidar_set_ae_max_exposure_time() 下发（设备仅在开流后
+  # 接受 AE opcode 0x26），作为 AE 自动收敛时可使用的曝光时间上限。
+  #
+  # Unit: milliseconds / 单位：毫秒
+  #   0      : disabled, keep the device default (no command sent)
+  #            不修改，保持设备默认值（不下发命令）
+  #   >= 5.0 : valid upper limit, e.g. 20.0 = 20 ms
+  #            有效上限，例如 20.0 表示 20ms
+  #
+  # ATTENTION: values in (0, 5.0) are rejected by the device with
+  # rc = 403 and are skipped by the driver. / 小于 5ms 的值会被设备
+  # 以 rc=403 拒绝，驱动会跳该设置。
+  # A shorter limit reduces motion blur in fast motion scenes but may
+  # darken dim scenes. / 更短的上限可减小运动模糊，但暗光场景会变暗。
+  # Note: it must stay below the frame period; at dtof_fps=290 the
+  # frame period is ~34ms, so 33.0 is a practical ceiling.
+  ########################################################
+
+  ae_max_exposure_time: 0.0   # ms; 0 = disabled; >= 5.0 = enabled
+
   # slam cloud data
   sendcloudslam: 1        # 0: off; 1: on
 
@@ -122,7 +149,7 @@ register_keys:
   showpath: 0             # 0: off; 1: on
   showcamerapose: 0       # 0: off; 1: on
   
-  custom_map_mode: 1      # 0: Odometry mode 1: SLAM mode 2: Relocalization mode
+  custom_map_mode: 0      # 0: Odometry mode 1: SLAM mode 2: Relocalization mode
   custom_init_pos: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
   custom_init_pose_search_radius: 4.0 # max position offset in meters, recommended <= 10
   custom_init_pose_max_rot_deg: 180.0 # max rotation offset in degrees, up to 180

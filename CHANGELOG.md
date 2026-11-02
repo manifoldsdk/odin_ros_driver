@@ -1,3 +1,8 @@
+unreleased
+1. add ae_max_exposure_time in control_command.yaml (AE upper exposure limit, ms)
+2. add /odin1/set_ae_max_exposure service for ROS1 and ROS2
+3. fix hotplug crash
+
 0.14.4 2260910
 1.modify lidar_api_type.h RGB comments
 2.update sdk to fix signal printf backtrace

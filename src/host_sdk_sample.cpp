@@ -53,6 +53,7 @@ limitations under the License.
     #include "odin_ros_driver/srv/get_ae.hpp"
     #include "odin_ros_driver/srv/get_awb.hpp"
     #include "odin_ros_driver/srv/set_ae.hpp"
+    #include "odin_ros_driver/srv/set_ae_max_exposure.hpp"
     #include "odin_ros_driver/srv/set_awb.hpp"
     #include "odin_ros_driver/srv/get_device_logs.hpp"
     #include "odin_ros_driver/srv/save_map.hpp"
@@ -70,6 +71,7 @@ limitations under the License.
     #include "odin_ros_driver/GetAe.h"
     #include "odin_ros_driver/GetAwb.h"
     #include "odin_ros_driver/SetAe.h"
+    #include "odin_ros_driver/SetAeMaxExposure.h"
     #include "odin_ros_driver/SetAwb.h"
     #include "odin_ros_driver/GetDeviceLogs.h"
     #include "odin_ros_driver/SaveMap.h"
@@ -77,7 +79,7 @@ limitations under the License.
     #include "odin_ros_driver/SetSlamMode.h"
     #include "odin_ros_driver/SetRelocMap.h"
 #endif
-#define ros_driver_version "0.14.4"
+#define ros_driver_version "0.14.5"
 #define required_firmware_version_major 0
 #define required_firmware_version_minor 13
 #define required_firmware_version_patch 0
@@ -183,6 +185,9 @@ int g_rgb_format = 0;     // 0: NV12; 1: MJPEG
 int g_rgb_width = 1600;   // Image width in pixels
 int g_rgb_height = 1296;  // Image height in pixels
 int g_rgb_fps = 100;      // Frame rate * 10 (300 = 30fps)
+
+// AE (auto exposure) upper limit in milliseconds; 0 disables the command
+float g_ae_max_exposure_time = 0.0f;
 
 std::filesystem::path log_root_dir_;
 std::atomic<int> g_custom_map_mode{0};
@@ -1872,6 +1877,9 @@ static void HandleDeviceEvent(const odin_ros_driver::DeviceEvent& event)
             }
         }
 
+        // AE max exposure time is applied later, after lidar_start_stream(),
+        // because the device only accepts it while streaming is active.
+
         if (lidar_set_mode(odinDevice, type)) {
             #ifdef ROS2
                 RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Set mode failed");
@@ -2098,6 +2106,41 @@ static void HandleDeviceEvent(const odin_ros_driver::DeviceEvent& event)
             lidar_activate_stream_type(odinDevice, LIDAR_DT_SLAM_CLOUD);
         } else {
             lidar_deactivate_stream_type(odinDevice, LIDAR_DT_SLAM_CLOUD);
+        }
+
+        // Apply the AE upper exposure limit after streaming is active: the
+        // device only accepts AE opcode 0x26 once the stream has started.
+        // Unit: milliseconds. g_ae_max_exposure_time == 0 keeps the device
+        // default; values below the 5 ms device floor are skipped because the
+        // device would reject them with rc = 403.
+        if (g_ae_max_exposure_time > 0.0f) {
+            if (g_ae_max_exposure_time < 5.0f) {
+                #ifdef ROS2
+                    RCLCPP_WARN(rclcpp::get_logger("device_cb"),
+                        "ae_max_exposure_time=%.2f ms is below the device minimum of 5.0 ms, skipped",
+                        g_ae_max_exposure_time);
+                #else
+                    ROS_WARN("ae_max_exposure_time=%.2f ms is below the device minimum of 5.0 ms, skipped",
+                        g_ae_max_exposure_time);
+                #endif
+            } else {
+                int ae_rc = lidar_set_ae_max_exposure_time(odinDevice, g_ae_max_exposure_time);
+                if (ae_rc) {
+                    #ifdef ROS2
+                        RCLCPP_WARN(rclcpp::get_logger("device_cb"),
+                            "set AE max exposure time failed (rc=%d): %.2f ms", ae_rc, g_ae_max_exposure_time);
+                    #else
+                        ROS_WARN("set AE max exposure time failed (rc=%d): %.2f ms", ae_rc, g_ae_max_exposure_time);
+                    #endif
+                } else {
+                    #ifdef ROS2
+                        RCLCPP_INFO(rclcpp::get_logger("device_cb"),
+                            "AE max exposure time configured: %.2f ms", g_ae_max_exposure_time);
+                    #else
+                        ROS_INFO("AE max exposure time configured: %.2f ms", g_ae_max_exposure_time);
+                    #endif
+                }
+            }
         }
 
         // Initialize save_map=0 after streaming is active, since the device
@@ -2399,6 +2442,25 @@ int main(int argc, char *argv[])
             res->success = (rc == 0);
         });
 
+    // AE upper exposure limit. Unlike /odin1/set_ae this does not switch the AE
+    // mode; it only clamps the maximum exposure time the AUTO loop may use
+    // (AE opcode 0x26). Range is validated by the device: below 5.0 ms returns
+    // rc = 403 (parameter out of range).
+    auto srv_set_ae_max_exposure = node->create_service<odin_ros_driver::srv::SetAeMaxExposure>(
+        "/odin1/set_ae_max_exposure",
+        [](const std::shared_ptr<odin_ros_driver::srv::SetAeMaxExposure::Request>  req,
+                 std::shared_ptr<odin_ros_driver::srv::SetAeMaxExposure::Response> res) {
+            std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
+                res->success = false;
+                res->rc = deviceLock.owns_lock() ? -100 : -2;
+                return;
+            }
+            int rc = lidar_set_ae_max_exposure_time(odinDevice, req->max_exposure_ms);
+            res->rc      = rc;
+            res->success = (rc == 0);
+        });
+
     auto srv_set_awb = node->create_service<odin_ros_driver::srv::SetAwb>(
         "/odin1/set_awb",
         [](const std::shared_ptr<odin_ros_driver::srv::SetAwb::Request>  req,
@@ -2581,7 +2643,7 @@ int main(int argc, char *argv[])
 
     RCLCPP_INFO(node->get_logger(),
         "Services ready: "
-        "/odin1/get_ae /odin1/get_awb /odin1/set_ae /odin1/set_awb; "
+        "/odin1/get_ae /odin1/get_awb /odin1/set_ae /odin1/set_ae_max_exposure /odin1/set_awb; "
         "/odin1/get_device_logs /odin1/save_map /odin1/reset_algo "
         "/odin1/set_slam_mode /odin1/set_reloc_map");
 #else
@@ -2692,6 +2754,26 @@ int main(int argc, char *argv[])
                     ? LIDAR_CAM_MODE_MANUAL : LIDAR_CAM_MODE_AUTO;
                 int rc = lidar_set_awb_param(odinDevice, mode,
                                              req.rgain, req.bgain);
+                res.rc      = rc;
+                res.success = (rc == 0);
+                return true;
+            }));
+
+    ros::ServiceServer srv_set_ae_max_exposure = nh.advertiseService<
+        odin_ros_driver::SetAeMaxExposure::Request,
+        odin_ros_driver::SetAeMaxExposure::Response>(
+        "/odin1/set_ae_max_exposure",
+        boost::function<bool(odin_ros_driver::SetAeMaxExposure::Request&,
+                             odin_ros_driver::SetAeMaxExposure::Response&)>(
+            [](odin_ros_driver::SetAeMaxExposure::Request  &req,
+               odin_ros_driver::SetAeMaxExposure::Response &res) -> bool {
+                std::unique_lock<std::mutex> deviceLock(device_mutex, std::try_to_lock);
+            if (!deviceLock.owns_lock() || !deviceConnected || signalRequested || g_shutdown_requested || odinDevice == nullptr) {
+                    res.success = false;
+                    res.rc = deviceLock.owns_lock() ? -100 : -2;
+                    return true;
+                }
+                int rc = lidar_set_ae_max_exposure_time(odinDevice, req.max_exposure_ms);
                 res.rc      = rc;
                 res.success = (rc == 0);
                 return true;
@@ -2877,7 +2959,7 @@ int main(int argc, char *argv[])
             }));
 
     ROS_INFO("Services ready: "
-             "/odin1/get_ae /odin1/get_awb /odin1/set_ae /odin1/set_awb; "
+             "/odin1/get_ae /odin1/get_awb /odin1/set_ae /odin1/set_ae_max_exposure /odin1/set_awb; "
              "/odin1/get_device_logs /odin1/save_map /odin1/reset_algo "
              "/odin1/set_slam_mode /odin1/set_reloc_map");
 #endif
@@ -2918,6 +3000,7 @@ int main(int argc, char *argv[])
 
         auto keys = g_parser->getRegisterKeys();
         auto keys_w_str_val = g_parser->getRegisterKeysStrVal();
+        auto keys_w_float_val = g_parser->getRegisterKeysFloatVal();
         g_parser->printConfig();
 
         auto get_key_value = [&](const std::string& key, int default_value) -> int {
@@ -2939,6 +3022,14 @@ int main(int argc, char *argv[])
         g_rgb_width     = get_key_value("rgb_width", 1536);
         g_rgb_height    = get_key_value("rgb_height", 1280);
         g_rgb_fps       = get_key_value("rgb_fps", 300);      // 300 = 30fps
+
+        auto get_key_float_value = [&](const std::string& key, double default_value) -> double {
+            auto it = keys_w_float_val.find(key);
+            return it != keys_w_float_val.end() ? it->second : default_value;
+        };
+
+        // AE upper exposure limit in milliseconds (0 = keep device default)
+        g_ae_max_exposure_time = (float)get_key_float_value("ae_max_exposure_time", 0.0);
         g_sendodom      = get_key_value("sendodom", 1);
         g_send_odom_baselink_tf = get_key_value("send_odom_baselink_tf", 0);
         g_tf_extra_publish_rate = get_key_value("tf_extra_publish_rate", 0);
