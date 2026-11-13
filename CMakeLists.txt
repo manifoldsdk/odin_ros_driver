@@ -544,6 +544,11 @@ if(TARGET_PLATFORM STREQUAL "arm")
     message(STATUS "Adding ARM-specific link options and RPATH")
 endif()
 
+# Keep SDK symbols private so its MD5 cannot override the DDS implementation.
+set_property(TARGET host_sdk_sample APPEND_STRING PROPERTY LINK_FLAGS
+    " -Wl,--exclude-libs,lib${LYD_HOST_API_LIB_NAME}.a"
+)
+
 # Add debug information
 message(STATUS "=======================================")
 message(STATUS "Project: ${PROJECT_NAME}")
