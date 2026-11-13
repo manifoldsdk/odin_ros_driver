@@ -223,7 +223,8 @@ int lidar_unregister_stream_callback(device_handle device);
 /**
  * @brief Open a LiDAR device for communication
  * 
- * Establishes a connection to the physical device.
+ * Establishes a connection to the physical device. If the device is already
+ * opened, logs a warning, skips the command and returns 0.
  * 
  * @param device Handle to the device to open
  * @return int 0 on success, negative error code on failure
@@ -233,7 +234,8 @@ int lidar_open_device(device_handle device);
 /**
  * @brief Close a LiDAR device
  * 
- * Closes the connection to the physical device.
+ * Closes the connection to the physical device. If the device is already
+ * closed, logs a warning, skips the command and returns 0.
  * 
  * @param device Handle to the device to close
  * @return int 0 on success, negative error code on failure
@@ -245,6 +247,8 @@ int lidar_close_device(device_handle device);
  * 
  * Must be called after lidar_open_device() and before lidar_start_stream().
  * Mode determines which data types are available for streaming.
+ * If the device is already in @p mode, logs a warning, skips the command
+ * and returns 0. The mode is re-sent after lidar_open_device() or a reconnect.
  * 
  * @param device Handle to the target device
  * @param mode Operating mode to set:
@@ -273,8 +277,9 @@ int lidar_set_mode(device_handle device, int mode);
  *                          For other types, this value can be ignored.
  * @return int 0 on success, negative error code on failure
  * 
- * @note You can start multiple stream types simultaneously by calling this
- *       function multiple times with different types.
+ * @note All streams are started at once regardless of @p type. If the device
+ *       is already streaming, logs a warning, skips the command, returns 0 and
+ *       sets dtof_subframe_odr to the last reported value.
  */
 int lidar_start_stream(device_handle device, int type, uint32_t &dtof_subframe_odr);
 
@@ -282,6 +287,8 @@ int lidar_start_stream(device_handle device, int type, uint32_t &dtof_subframe_o
  * @brief Stop data streaming from the device
  * 
  * Stops the flow of data from the device for the specified type.
+ * If the device is not streaming, logs a warning, skips the command and
+ * returns 0.
  * 
  * @param device Handle to the target device
  * @param type Type of data stream to stop
@@ -786,6 +793,8 @@ int lidar_set_ae_param(device_handle device, lidar_cam_mode_e mode,
  *     is allowed to use.
  *   - The device enforces a minimum of 5.0 ms; smaller values are
  *     rejected with rc = 403 (LIDAR_AE_PARAM_OUT_OF_RANGE).
+ *   - Values above the per-tier default (30 / 20 / 15 ms at
+ *     10.26 / 14.47 / 28.92 Hz) log a warning but are still sent.
  *
  * @param device           Device handle.
  * @param max_exposure_ms  Maximum exposure time in milliseconds (>= 5.0).

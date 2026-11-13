@@ -1,9 +1,11 @@
-unreleased
+0.14.5 20261113
 1. add ae_max_exposure_time in control_command.yaml (AE upper exposure limit, ms)
 2. add /odin1/set_ae_max_exposure service for ROS1 and ROS2
 3. fix hotplug crash
+4. update sdk: lidar_set_ae_max_exposure_time warns (but still sends) when the limit exceeds the per-tier default (30/20/15 ms at 10.26/14.47/28.92 Hz)
+5. update sdk: lidar_open_device / lidar_close_device / lidar_set_mode / lidar_start_stream / lidar_stop_stream skip (warn, return 0) when the device is already in the requested state
 
-0.14.4 2260910
+0.14.4 20260910
 1.modify lidar_api_type.h RGB comments
 2.update sdk to fix signal printf backtrace
 

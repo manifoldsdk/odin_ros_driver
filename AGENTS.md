@@ -55,5 +55,13 @@ g++ -std=c++17 -O1 -pthread \
   lib/liblydHostApi_amd.a -lusb-1.0 -lrt -o /tmp/packet_group_test && /tmp/packet_group_test
 ```
 
-- 注意：仓库里的 arm 归档 `lib/liblydHostApi_arm.a` 未重建；ARM 目标需用交叉工具链单独重建后同样刷新。
-- Note: the committed ARM archive `lib/liblydHostApi_arm.a` was NOT rebuilt; rebuild it with the cross toolchain and refresh it the same way for ARM targets.
+- 发布用归档在 Ubuntu 20.04（GCC 9.4）容器中编译：x86 用 `fe184c3a3555`（mt-ros1-env），aarch64 用 `b8c3d3d45f6d`（odin-arm64），两者都挂载了 `/home/xxx`。aarch64 必须加 `-DCONFIG_PLATFORM_X64_LINUX=ON`，否则顶层 CMake 不会生成 `lydHostApi`；用 `-u 1000:1000` 避免产生 root 文件。
+- Release archives are built in Ubuntu 20.04 (GCC 9.4) containers: x86 in `fe184c3a3555` (mt-ros1-env), aarch64 in `b8c3d3d45f6d` (odin-arm64); both mount `/home/xxx`. aarch64 needs `-DCONFIG_PLATFORM_X64_LINUX=ON` or the top-level CMake skips `lydHostApi`; use `-u 1000:1000` to avoid root-owned files.
+
+```bash
+# x86 -> lib/liblydHostApi_amd.a ; aarch64: container b8c3d3d45f6d, toolchain aarch64-linux-native.cmake,
+# extra -DCONFIG_PLATFORM_X64_LINUX=ON, build dir build/u20_arm64 -> lib/liblydHostApi_arm.a
+docker exec -u 1000:1000 -w /home/xxx/work/odin1/sdk/lyd_host_sdk fe184c3a3555 bash -c \
+  'cmake -DCMAKE_TOOLCHAIN_FILE=./toolchain/x86_64-linux-host.cmake -DCMAKE_BUILD_TYPE=Release -Wno-dev -B build/u20_x86 -S . && cmake --build build/u20_x86 --target lydHostApi -j8'
+cp /home/xxx/work/odin1/sdk/lyd_host_sdk/build/u20_x86/sdk/modules-test/host_sdk_sample/liblydHostApi.a lib/liblydHostApi_amd.a
+```

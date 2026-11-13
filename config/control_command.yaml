@@ -103,8 +103,9 @@ register_keys:
   # 以 rc=403 拒绝，驱动会跳该设置。
   # A shorter limit reduces motion blur in fast motion scenes but may
   # darken dim scenes. / 更短的上限可减小运动模糊，但暗光场景会变暗。
-  # Note: it must stay below the frame period; at dtof_fps=290 the
-  # frame period is ~34ms, so 33.0 is a practical ceiling.
+  # Note: the device applies 30 / 20 / 15 ms by default at 10.26 / 14.47 /
+  # 28.92 Hz. Larger values make the SDK log a warning but are still sent.
+  # / 开流时设备按档位默认 30/20/15 ms，超过时 SDK 打印警告，仍会下发。
   ########################################################
 
   ae_max_exposure_time: 0.0   # ms; 0 = disabled; >= 5.0 = enabled
